@@ -1,0 +1,21 @@
+# Slack Bot Framework
+slack-bolt==1.18.1
+slack-sdk==3.26.2
+
+# HTTP Requests
+requests==2.31.0
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# CSV Processing
+pandas==2.1.4
+
+# Natural Language Processing (optional, for query enhancement)
+openai==1.12.0
+
+# Logging
+python-json-logger==2.0.7
+
+# Date/Time utilities
+python-dateutil==2.8.2
