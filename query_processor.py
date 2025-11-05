@@ -48,9 +48,13 @@ class QueryProcessor:
             query: Query text
 
         Returns:
-            Entity type (people, companies, opportunities, leads)
+            Entity type (people, companies, opportunities, leads, tasks, projects)
         """
-        if any(keyword in query for keyword in ['person', 'people', 'contact', 'contacts']):
+        if any(keyword in query for keyword in ['task', 'tasks', 'todo', 'todos', 'to-do']):
+            return 'tasks'
+        elif any(keyword in query for keyword in ['project', 'projects']):
+            return 'projects'
+        elif any(keyword in query for keyword in ['person', 'people', 'contact', 'contacts']):
             return 'people'
         elif any(keyword in query for keyword in ['company', 'companies', 'organization', 'business']):
             return 'companies'

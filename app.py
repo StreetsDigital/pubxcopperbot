@@ -84,6 +84,10 @@ def handle_mention(event, say, client):
             results = copper_client.search_opportunities(criteria)
         elif entity_type == "leads":
             results = copper_client.search_leads(criteria)
+        elif entity_type == "tasks":
+            results = copper_client.search_tasks(criteria)
+        elif entity_type == "projects":
+            results = copper_client.search_projects(criteria)
 
         # Format and send results
         formatted_results = query_processor.format_results(results, entity_type)
@@ -166,6 +170,10 @@ def handle_message(event, say, client):
             results = copper_client.search_opportunities(criteria)
         elif entity_type == "leads":
             results = copper_client.search_leads(criteria)
+        elif entity_type == "tasks":
+            results = copper_client.search_tasks(criteria)
+        elif entity_type == "projects":
+            results = copper_client.search_projects(criteria)
 
         # Format and send results
         formatted_results = query_processor.format_results(results, entity_type)
@@ -288,6 +296,10 @@ def handle_copper_command(ack, command, say):
             results = copper_client.search_opportunities(criteria)
         elif entity_type == "leads":
             results = copper_client.search_leads(criteria)
+        elif entity_type == "tasks":
+            results = copper_client.search_tasks(criteria)
+        elif entity_type == "projects":
+            results = copper_client.search_projects(criteria)
 
         # Format and send results
         formatted_results = query_processor.format_results(results, entity_type)
@@ -508,37 +520,307 @@ def handle_approve_button(ack, action, say, client):
             say(text="Failed to approve request.")
             return
 
-        # Execute the update in Copper
+        # Execute the operation in Copper
+        operation = request.get('operation', 'update')
         entity_type = request['entity_type']
-        entity_id = request['entity_id']
-        updates = request['updates']
+        entity_id = request.get('entity_id')
+        data = request.get('data', request.get('updates', {}))
 
         result = None
-        if entity_type == 'person':
-            result = copper_client.update_person(entity_id, updates)
-        elif entity_type == 'company':
-            result = copper_client.update_company(entity_id, updates)
-        elif entity_type == 'opportunity':
-            result = copper_client.update_opportunity(entity_id, updates)
+        success = False
 
-        if result:
-            approval_system.complete_request(request_id)
-            say(text=f"✅ Approved and updated {entity_type} '{request['entity_name']}' in Copper CRM!")
+        try:
+            if operation == 'create':
+                # Create new entity
+                if entity_type in ['person', 'people']:
+                    result = copper_client.create_person(data)
+                elif entity_type in ['company', 'companies']:
+                    result = copper_client.create_company(data)
+                elif entity_type in ['opportunity', 'opportunities']:
+                    result = copper_client.create_opportunity(data)
+                elif entity_type in ['lead', 'leads']:
+                    result = copper_client.create_lead(data)
+                elif entity_type in ['task', 'tasks']:
+                    result = copper_client.create_task(data)
+                elif entity_type in ['project', 'projects']:
+                    result = copper_client.create_project(data)
 
-            # Notify requester
-            requester_id = request['requester_id']
-            try:
-                client.chat_postMessage(
-                    channel=requester_id,
-                    text=f"Your update request for {entity_type} '{request['entity_name']}' has been approved and completed!"
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify requester: {e}")
-        else:
-            say(text=f"❌ Approved but failed to update in Copper CRM. Please check manually.")
+                if result:
+                    success = True
+                    new_id = result.get('id', 'Unknown')
+                    new_name = result.get('name', request['entity_name'])
+                    approval_system.complete_request(request_id)
+                    say(text=f"✅ Approved and created {entity_type} '{new_name}' (ID: {new_id}) in Copper CRM!")
+
+                    # Notify requester
+                    requester_id = request['requester_id']
+                    try:
+                        client.chat_postMessage(
+                            channel=requester_id,
+                            text=f"Your create request for {entity_type} has been approved!\nNew record: {new_name} (ID: {new_id})"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to notify requester: {e}")
+
+            elif operation == 'delete':
+                # Delete entity
+                if entity_type in ['person', 'people']:
+                    success = copper_client.delete_person(entity_id)
+                elif entity_type in ['company', 'companies']:
+                    success = copper_client.delete_company(entity_id)
+                elif entity_type in ['opportunity', 'opportunities']:
+                    success = copper_client.delete_opportunity(entity_id)
+                elif entity_type in ['lead', 'leads']:
+                    success = copper_client.delete_lead(entity_id)
+                elif entity_type in ['task', 'tasks']:
+                    success = copper_client.delete_task(entity_id)
+                elif entity_type in ['project', 'projects']:
+                    success = copper_client.delete_project(entity_id)
+
+                if success:
+                    approval_system.complete_request(request_id)
+                    say(text=f"✅ Approved and deleted {entity_type} '{request['entity_name']}' from Copper CRM!")
+
+                    # Notify requester
+                    requester_id = request['requester_id']
+                    try:
+                        client.chat_postMessage(
+                            channel=requester_id,
+                            text=f"Your delete request for {entity_type} '{request['entity_name']}' has been approved and completed!"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to notify requester: {e}")
+
+            else:  # update
+                # Update entity
+                if entity_type in ['person', 'people']:
+                    result = copper_client.update_person(entity_id, data)
+                elif entity_type in ['company', 'companies']:
+                    result = copper_client.update_company(entity_id, data)
+                elif entity_type in ['opportunity', 'opportunities']:
+                    result = copper_client.update_opportunity(entity_id, data)
+                elif entity_type in ['lead', 'leads']:
+                    result = copper_client.update_lead(entity_id, data)
+                elif entity_type in ['task', 'tasks']:
+                    result = copper_client.update_task(entity_id, data)
+                elif entity_type in ['project', 'projects']:
+                    result = copper_client.update_project(entity_id, data)
+
+                if result:
+                    success = True
+                    approval_system.complete_request(request_id)
+                    say(text=f"✅ Approved and updated {entity_type} '{request['entity_name']}' in Copper CRM!")
+
+                    # Notify requester
+                    requester_id = request['requester_id']
+                    try:
+                        client.chat_postMessage(
+                            channel=requester_id,
+                            text=f"Your update request for {entity_type} '{request['entity_name']}' has been approved and completed!"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to notify requester: {e}")
+
+            if not success and not result:
+                say(text=f"❌ Approved but failed to {operation} in Copper CRM. Please check manually.")
+
+        except Exception as e:
+            logger.error(f"Error executing {operation}: {e}")
+            say(text=f"❌ Error executing {operation}: {str(e)}")
 
     except Exception as e:
         logger.error(f"Error handling approve button: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.command("/copper-create")
+def handle_create_command(ack, command, say, client):
+    """
+    Handle /copper-create slash command to request CRM record creation.
+
+    Args:
+        ack: Acknowledge function
+        command: Command data
+        say: Function to send messages
+        client: Slack client
+    """
+    ack()
+
+    try:
+        text = command.get("text", "").strip()
+        user = command.get("user_id")
+
+        if not text:
+            say(
+                text=f"<@{user}> Usage: `/copper-create [entity_type] field=value field2=value2`\n"
+                     f"Example: `/copper-create person name=\"John Smith\" email=john@example.com`\n"
+                     f"Supported types: person, company, opportunity, lead, task, project"
+            )
+            return
+
+        # Parse command: entity_type field=value field=value
+        parts = text.split()
+        if len(parts) < 2:
+            say(text="Invalid format. Need at least: entity_type field=value")
+            return
+
+        entity_type = parts[0].lower()
+
+        # Parse data
+        data = {}
+        for part in parts[1:]:
+            if '=' in part:
+                key, value = part.split('=', 1)
+                # Remove quotes if present
+                value = value.strip('"').strip("'")
+                data[key] = value
+
+        if not data:
+            say(text="No data specified. Use format: field=value")
+            return
+
+        # Validate required fields
+        if 'name' not in data and entity_type not in ['person', 'people']:
+            say(text=f"Missing required field: 'name'")
+            return
+
+        entity_name = data.get('name', 'New Record')
+
+        # Create request
+        request_id = approval_system.create_request(
+            requester_id=user,
+            operation='create',
+            entity_type=entity_type,
+            data=data,
+            entity_name=entity_name
+        )
+
+        request = approval_system.get_request(request_id)
+
+        # Notify user
+        say(text=f"Create request submitted! Request ID: `{request_id}`\n"
+                 f"Waiting for approval from authorized users.")
+
+        # Notify approvers
+        approvers = approval_system.get_approvers()
+        if approvers:
+            for approver_id in approvers:
+                try:
+                    blocks = approval_system.create_approval_blocks(request_id, request)
+                    client.chat_postMessage(
+                        channel=approver_id,
+                        text=f"New create request from <@{user}>",
+                        blocks=blocks
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify approver {approver_id}: {e}")
+        else:
+            say(text="⚠️ Warning: No approvers configured! Use `/copper-add-approver` to add approvers.")
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-create command: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.command("/copper-delete")
+def handle_delete_command(ack, command, say, client):
+    """
+    Handle /copper-delete slash command to request CRM record deletion.
+
+    Args:
+        ack: Acknowledge function
+        command: Command data
+        say: Function to send messages
+        client: Slack client
+    """
+    ack()
+
+    try:
+        text = command.get("text", "").strip()
+        user = command.get("user_id")
+
+        if not text:
+            say(
+                text=f"<@{user}> Usage: `/copper-delete [entity_type] [entity_id]`\n"
+                     f"Example: `/copper-delete person 12345`\n"
+                     f"Supported types: person, company, opportunity, lead, task, project"
+            )
+            return
+
+        # Parse command: entity_type entity_id
+        parts = text.split()
+        if len(parts) < 2:
+            say(text="Invalid format. Need: entity_type entity_id")
+            return
+
+        entity_type = parts[0].lower()
+        try:
+            entity_id = int(parts[1])
+        except ValueError:
+            say(text=f"Invalid entity ID: {parts[1]}")
+            return
+
+        # Get entity details for display
+        entity_data = None
+        if entity_type in ['person', 'people']:
+            entity_data = copper_client.get_person(entity_id)
+            entity_type = 'person'
+        elif entity_type in ['company', 'companies']:
+            entity_data = copper_client.get_company(entity_id)
+            entity_type = 'company'
+        elif entity_type in ['opportunity', 'opportunities']:
+            entity_data = copper_client.get_opportunity(entity_id)
+            entity_type = 'opportunity'
+        elif entity_type in ['lead', 'leads']:
+            entity_data = copper_client.get_lead(entity_id)
+            entity_type = 'lead'
+        elif entity_type in ['task', 'tasks']:
+            entity_data = copper_client.get_task(entity_id)
+            entity_type = 'task'
+        elif entity_type in ['project', 'projects']:
+            entity_data = copper_client.get_project(entity_id)
+            entity_type = 'project'
+
+        if not entity_data:
+            say(text=f"Could not find {entity_type} with ID {entity_id}")
+            return
+
+        entity_name = entity_data.get('name', 'Unknown')
+
+        # Create delete request
+        request_id = approval_system.create_request(
+            requester_id=user,
+            operation='delete',
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_name=entity_name
+        )
+
+        request = approval_system.get_request(request_id)
+
+        # Notify user
+        say(text=f"⚠️ Delete request created! Request ID: `{request_id}`\n"
+                 f"Entity: {entity_name}\n"
+                 f"Waiting for approval from authorized users.")
+
+        # Notify approvers
+        approvers = approval_system.get_approvers()
+        if approvers:
+            for approver_id in approvers:
+                try:
+                    blocks = approval_system.create_approval_blocks(request_id, request)
+                    client.chat_postMessage(
+                        channel=approver_id,
+                        text=f"⚠️ DELETE request from <@{user}>",
+                        blocks=blocks
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify approver {approver_id}: {e}")
+        else:
+            say(text="⚠️ Warning: No approvers configured! Use `/copper-add-approver` to add approvers.")
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-delete command: {str(e)}", exc_info=True)
         say(text=f"Sorry, I encountered an error: {str(e)}")
 
 

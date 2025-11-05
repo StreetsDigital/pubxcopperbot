@@ -4,34 +4,47 @@ A Slack bot that allows resellers and sales people to query Copper CRM using nat
 
 ## Features
 
+- **Full CRUD Operations**: Complete Create, Read, Update, Delete for all Copper CRM entities
+  - People/Contacts
+  - Companies
+  - Opportunities/Deals
+  - Leads
+  - Tasks
+  - Projects
+  - All operations require approval workflow (see [CRUD_OPERATIONS.md](CRUD_OPERATIONS.md))
+
 - **Natural Language Queries**: Ask questions in plain English
   - "Find contacts at Acme Corp"
   - "Show me opportunities over $50,000"
-  - "Search for companies in San Francisco"
+  - "Search for tasks due this week"
+  - "List active projects"
 
 - **CSV Enrichment**: Upload a CSV file and get it back with CRM data
   - Automatically checks if contacts, companies, and opportunities exist in CRM
   - Adds three new columns: "Contact is in CRM", "Company is in CRM", "Opportunity exists"
   - Returns enriched CSV file for easy analysis
 
-- **Update Records with Approval Workflow**: Update CRM records directly from Slack
-  - Request updates via `/copper-update` command
-  - Designated approvers review and approve/reject updates
+- **Create Records with Approval**: Create new CRM records directly from Slack
+  - Request creation via `/copper-create` command
+  - Supports all entity types with full field control
+  - Designated approvers review and approve/reject
   - Interactive approval buttons in Slack
-  - Automatic notification to requester when approved/rejected
-  - All updates tracked and logged
 
-- **Multiple Entity Types**: Search across different Copper entities
-  - People/Contacts
-  - Companies
-  - Opportunities/Deals
-  - Leads
+- **Update Records with Approval**: Update existing CRM records
+  - Request updates via `/copper-update` command
+  - Modify any field on any entity type
+  - Approvers see before/after details
+
+- **Delete Records with Approval**: Safely delete CRM records
+  - Request deletion via `/copper-delete` command
+  - Clear warnings about permanent deletion
+  - Approvers must explicitly confirm
 
 - **Flexible Integration**:
   - Direct messages to the bot
   - Mention the bot in channels
-  - Use `/copper` slash command
-  - Works in external shared channels
+  - Slash commands for all operations
+  - Works in external shared channels with resellers/sales
 
 ## Setup
 
@@ -105,6 +118,14 @@ Under **OAuth & Permissions**, add these Bot Token Scopes:
 **Command 4: `/copper-pending`**
 - Short Description: "View pending approval requests"
 - Usage Hint: (leave empty)
+
+**Command 5: `/copper-create`**
+- Short Description: "Request to create a new CRM record"
+- Usage Hint: "person name='John' email=john@example.com"
+
+**Command 6: `/copper-delete`**
+- Short Description: "Request to delete a CRM record"
+- Usage Hint: "person 12345"
 
 #### Install App
 
@@ -257,9 +278,13 @@ opportunities,Cloud Migration,
 
 Upload this file to the bot and receive results for all three queries.
 
-## Updating CRM Records with Approval Workflow
+## Full CRUD Operations with Approval Workflow
 
-The bot allows users to request updates to CRM records, which must be approved by designated approvers before being applied.
+The bot provides complete Create, Read, Update, and Delete operations for all Copper CRM entities. All modifications (Create, Update, Delete) require approval from designated approvers.
+
+**📚 For complete CRUD documentation, see [CRUD_OPERATIONS.md](CRUD_OPERATIONS.md)**
+
+### Quick Start
 
 ### Setting Up Approvers
 
@@ -301,11 +326,26 @@ Approvers can view all pending requests:
 /copper-pending
 ```
 
-### Update Examples
+### Operation Examples
+
+**Create a New Contact:**
+```
+/copper-create person name="Sarah Johnson" email=sarah@company.com phone=555-1234
+```
 
 **Update Contact Email:**
 ```
 /copper-update person 12345 email=john.smith@newcompany.com
+```
+
+**Delete an Opportunity:**
+```
+/copper-delete opportunity 11111
+```
+
+**Create a Task:**
+```
+/copper-create task name="Follow up with lead" due_date=2025-12-01
 ```
 
 **Update Company Information:**
@@ -313,10 +353,7 @@ Approvers can view all pending requests:
 /copper-update company 67890 city="San Francisco" state=CA
 ```
 
-**Update Opportunity Value:**
-```
-/copper-update opportunity 11111 monetary_value=150000 status=won
-```
+See [CRUD_OPERATIONS.md](CRUD_OPERATIONS.md) for complete documentation on all operations.
 
 ## Advanced Features
 
@@ -533,6 +570,15 @@ Contributions are welcome! Please:
 4. Submit a pull request
 
 ## Changelog
+
+### v3.0.0 (2025-11-05) - Full CRUD Release
+- **Full CRUD Operations**: Complete Create, Read, Update, Delete for all entities
+- **6 Entity Types**: People, Companies, Opportunities, Leads, Tasks, Projects
+- **Create Records**: `/copper-create` command with approval workflow
+- **Delete Records**: `/copper-delete` command with safety confirmations
+- **Enhanced Approval System**: Handles create, update, and delete operations
+- **Interactive UI**: Clear operation-specific approval cards
+- **Comprehensive Documentation**: New CRUD_OPERATIONS.md guide
 
 ### v2.0.0 (2025-11-05)
 - **CSV Enrichment**: Upload CSV and get enriched file with CRM existence columns

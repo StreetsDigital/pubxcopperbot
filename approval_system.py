@@ -61,6 +61,54 @@ class ApprovalSystem:
         """
         return list(self.approvers)
 
+    def create_request(
+        self,
+        requester_id: str,
+        operation: str,
+        entity_type: str,
+        entity_id: Optional[int] = None,
+        data: Optional[Dict[str, Any]] = None,
+        entity_name: str = "Unknown"
+    ) -> str:
+        """
+        Create a new operation request (create, update, or delete).
+
+        Args:
+            requester_id: Slack user ID of requester
+            operation: Type of operation ('create', 'update', 'delete')
+            entity_type: Type of entity (person, company, opportunity, etc.)
+            entity_id: Copper entity ID (for update/delete)
+            data: Dictionary with data (updates for update, new data for create)
+            entity_name: Name of the entity
+
+        Returns:
+            Request ID
+        """
+        timestamp = datetime.now().timestamp()
+        if entity_id:
+            request_id = f"{operation}_{entity_type}_{entity_id}_{timestamp}"
+        else:
+            request_id = f"{operation}_{entity_type}_{timestamp}"
+
+        request = {
+            'request_id': request_id,
+            'requester_id': requester_id,
+            'operation': operation,
+            'entity_type': entity_type,
+            'entity_id': entity_id,
+            'entity_name': entity_name,
+            'data': data or {},
+            'status': 'pending',
+            'created_at': datetime.now().isoformat(),
+            'approved_by': None,
+            'approved_at': None
+        }
+
+        self.pending_approvals[request_id] = request
+        logger.info(f"Created {operation} request: {request_id}")
+
+        return request_id
+
     def create_update_request(
         self,
         requester_id: str,
@@ -70,7 +118,7 @@ class ApprovalSystem:
         entity_name: str = "Unknown"
     ) -> str:
         """
-        Create a new update request.
+        Create a new update request (backward compatibility).
 
         Args:
             requester_id: Slack user ID of requester
@@ -82,25 +130,14 @@ class ApprovalSystem:
         Returns:
             Request ID
         """
-        request_id = f"{entity_type}_{entity_id}_{datetime.now().timestamp()}"
-
-        request = {
-            'request_id': request_id,
-            'requester_id': requester_id,
-            'entity_type': entity_type,
-            'entity_id': entity_id,
-            'entity_name': entity_name,
-            'updates': updates,
-            'status': 'pending',
-            'created_at': datetime.now().isoformat(),
-            'approved_by': None,
-            'approved_at': None
-        }
-
-        self.pending_approvals[request_id] = request
-        logger.info(f"Created update request: {request_id}")
-
-        return request_id
+        return self.create_request(
+            requester_id=requester_id,
+            operation='update',
+            entity_type=entity_type,
+            entity_id=entity_id,
+            data=updates,
+            entity_name=entity_name
+        )
 
     def get_pending_requests(self) -> List[Dict]:
         """
@@ -226,18 +263,33 @@ class ApprovalSystem:
         Returns:
             Formatted string
         """
+        operation = request.get('operation', 'update')
         entity_type = request['entity_type'].title()
         entity_name = request['entity_name']
         requester = request['requester_id']
-        updates = request['updates']
+        data = request.get('data', request.get('updates', {}))
 
-        message = f"*Update Request: {entity_type}*\n\n"
-        message += f"📝 Entity: {entity_name}\n"
-        message += f"👤 Requested by: <@{requester}>\n"
-        message += f"🕐 Time: {request['created_at']}\n\n"
-        message += "*Proposed Changes:*\n"
+        if operation == 'create':
+            message = f"*Create Request: New {entity_type}*\n\n"
+            message += f"👤 Requested by: <@{requester}>\n"
+            message += f"🕐 Time: {request['created_at']}\n\n"
+            message += "*New Record Details:*\n"
+        elif operation == 'delete':
+            message = f"*Delete Request: {entity_type}*\n\n"
+            message += f"📝 Entity: {entity_name}\n"
+            message += f"🆔 ID: {request.get('entity_id', 'N/A')}\n"
+            message += f"👤 Requested by: <@{requester}>\n"
+            message += f"🕐 Time: {request['created_at']}\n\n"
+            message += "⚠️ *This will permanently delete the record!*\n"
+            return message
+        else:  # update
+            message = f"*Update Request: {entity_type}*\n\n"
+            message += f"📝 Entity: {entity_name}\n"
+            message += f"👤 Requested by: <@{requester}>\n"
+            message += f"🕐 Time: {request['created_at']}\n\n"
+            message += "*Proposed Changes:*\n"
 
-        for field, value in updates.items():
+        for field, value in data.items():
             message += f"• {field}: `{value}`\n"
 
         return message
@@ -253,28 +305,33 @@ class ApprovalSystem:
         Returns:
             List of Block Kit blocks
         """
+        operation = request.get('operation', 'update')
         entity_type = request['entity_type'].title()
         entity_name = request['entity_name']
         requester = request['requester_id']
-        updates = request['updates']
+        data = request.get('data', request.get('updates', {}))
 
-        # Format updates as fields
-        update_fields = []
-        for field, value in updates.items():
-            update_fields.append({
-                "type": "mrkdwn",
-                "text": f"*{field}:*\n{value}"
-            })
+        # Header based on operation
+        if operation == 'create':
+            header_text = f"➕ Create Request: New {entity_type}"
+        elif operation == 'delete':
+            header_text = f"🗑️ Delete Request: {entity_type}"
+        else:
+            header_text = f"✏️ Update Request: {entity_type}"
 
         blocks = [
             {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔔 Update Request: {entity_type}"
+                    "text": header_text
                 }
-            },
-            {
+            }
+        ]
+
+        # Section fields based on operation
+        if operation == 'delete':
+            blocks.append({
                 "type": "section",
                 "fields": [
                     {
@@ -283,31 +340,65 @@ class ApprovalSystem:
                     },
                     {
                         "type": "mrkdwn",
+                        "text": f"*ID:*\n{request.get('entity_id', 'N/A')}"
+                    },
+                    {
+                        "type": "mrkdwn",
                         "text": f"*Requested by:*\n<@{requester}>"
                     }
                 ]
-            },
-            {
-                "type": "divider"
-            },
-            {
+            })
+            blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "*Proposed Changes:*"
+                    "text": "⚠️ *Warning: This will permanently delete the record!*"
                 }
-            }
-        ]
-
-        # Add update fields in chunks of 10 (Slack limit)
-        for i in range(0, len(update_fields), 10):
-            chunk = update_fields[i:i+10]
+            })
+        else:
             blocks.append({
                 "type": "section",
-                "fields": chunk
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Entity:*\n{entity_name}" if operation != 'create' else f"*Type:*\n{entity_type}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Requested by:*\n<@{requester}>"
+                    }
+                ]
             })
 
-        # Add action buttons
+        blocks.append({"type": "divider"})
+
+        # Data fields
+        if data:
+            data_fields = []
+            for field, value in data.items():
+                data_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*{field}:*\n{value}"
+                })
+
+            label = "New Record Details:" if operation == 'create' else "Proposed Changes:"
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{label}*"
+                }
+            })
+
+            # Add data fields in chunks of 10 (Slack limit)
+            for i in range(0, len(data_fields), 10):
+                chunk = data_fields[i:i+10]
+                blocks.append({
+                    "type": "section",
+                    "fields": chunk
+                })
+
+        # Action buttons
         blocks.extend([
             {
                 "type": "divider"
