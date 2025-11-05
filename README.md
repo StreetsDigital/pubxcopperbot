@@ -9,9 +9,17 @@ A Slack bot that allows resellers and sales people to query Copper CRM using nat
   - "Show me opportunities over $50,000"
   - "Search for companies in San Francisco"
 
-- **CSV Batch Queries**: Upload a CSV file with multiple search criteria
-  - Process multiple queries at once
-  - Get structured results for each row
+- **CSV Enrichment**: Upload a CSV file and get it back with CRM data
+  - Automatically checks if contacts, companies, and opportunities exist in CRM
+  - Adds three new columns: "Contact is in CRM", "Company is in CRM", "Opportunity exists"
+  - Returns enriched CSV file for easy analysis
+
+- **Update Records with Approval Workflow**: Update CRM records directly from Slack
+  - Request updates via `/copper-update` command
+  - Designated approvers review and approve/reject updates
+  - Interactive approval buttons in Slack
+  - Automatic notification to requester when approved/rejected
+  - All updates tracked and logged
 
 - **Multiple Entity Types**: Search across different Copper entities
   - People/Contacts
@@ -55,6 +63,7 @@ Under **OAuth & Permissions**, add these Bot Token Scopes:
 - `chat:write` - Send messages
 - `commands` - Add slash commands
 - `files:read` - View files shared in channels
+- `files:write` - Upload enriched CSV files
 - `im:history` - View messages in direct messages
 - `im:read` - View basic info about direct messages
 - `im:write` - Start direct messages
@@ -76,14 +85,26 @@ Under **OAuth & Permissions**, add these Bot Token Scopes:
    - `file_shared`
    - `message.im`
 
-#### Add Slash Command
+#### Add Slash Commands
 
 1. Go to **Slash Commands**
-2. Click **Create New Command**
-3. Command: `/copper`
-4. Request URL: (not needed for Socket Mode)
-5. Short Description: "Query Copper CRM"
-6. Usage Hint: "Find contacts at Acme Corp"
+2. Create the following commands (for each: Request URL not needed for Socket Mode):
+
+**Command 1: `/copper`**
+- Short Description: "Query Copper CRM"
+- Usage Hint: "Find contacts at Acme Corp"
+
+**Command 2: `/copper-update`**
+- Short Description: "Request to update a CRM record"
+- Usage Hint: "person 12345 email=new@email.com"
+
+**Command 3: `/copper-add-approver`**
+- Short Description: "Add an approver for CRM updates"
+- Usage Hint: "@username"
+
+**Command 4: `/copper-pending`**
+- Short Description: "View pending approval requests"
+- Usage Hint: (leave empty)
 
 #### Install App
 
@@ -161,25 +182,36 @@ Use the `/copper` command:
 /copper Show companies in San Francisco
 ```
 
-### CSV File Uploads
+### CSV File Uploads (with CRM Enrichment)
 
-Upload a CSV file to query multiple records at once.
+Upload a CSV file and get it back with three new columns showing if records exist in your CRM:
+- **Contact is in CRM**: Yes/No
+- **Company is in CRM**: Yes/No
+- **Opportunity exists**: Yes/No
 
 #### CSV Format Example
 
+Input CSV:
 ```csv
-type,name,email,city
-people,John Smith,john@example.com,
-companies,Acme Corp,,San Francisco
-opportunities,Enterprise Deal,,
+name,email,company,opportunity
+John Smith,john@example.com,Acme Corp,Q1 Deal
+Jane Doe,jane@example.com,TechCo,Enterprise Sale
+```
+
+Output CSV (enriched):
+```csv
+name,email,company,opportunity,Contact is in CRM,Company is in CRM,Opportunity exists
+John Smith,john@example.com,Acme Corp,Q1 Deal,Yes,Yes,No
+Jane Doe,jane@example.com,TechCo,Enterprise Sale,No,Yes,Yes
 ```
 
 #### Supported CSV Columns
 
-- `type` or `entity_type`: people, companies, opportunities, leads
-- `name`: Person or company name
+- `name` or `contact_name`: Person name
 - `email`: Email address
 - `phone`: Phone number
+- `company` or `company_name`: Company name
+- `opportunity` or `opportunity_name` or `deal`: Opportunity name
 - `city`: City
 - `state`: State/Province
 - `country`: Country
@@ -224,6 +256,67 @@ opportunities,Cloud Migration,
 ```
 
 Upload this file to the bot and receive results for all three queries.
+
+## Updating CRM Records with Approval Workflow
+
+The bot allows users to request updates to CRM records, which must be approved by designated approvers before being applied.
+
+### Setting Up Approvers
+
+First, designate who can approve updates:
+```
+/copper-add-approver @manager
+/copper-add-approver @admin
+```
+
+### Requesting an Update
+
+Any user can request an update using the `/copper-update` command:
+
+```
+/copper-update person 12345 email=newemail@company.com phone=555-1234
+/copper-update company 67890 name="New Company Name" city=Seattle
+/copper-update opportunity 11111 monetary_value=75000
+```
+
+Format: `/copper-update [entity_type] [entity_id] field=value field2=value2`
+
+### Approval Process
+
+1. **Request Created**: User submits update request
+2. **Notification Sent**: All approvers receive a DM with an interactive approval card
+3. **Review**: Approver sees:
+   - Who requested the update
+   - Which entity (with name)
+   - Proposed changes
+   - Approve/Reject buttons
+4. **Decision**: Approver clicks Approve or Reject
+5. **Execution**: If approved, changes are immediately applied to Copper CRM
+6. **Notification**: Requester is notified of the decision
+
+### Viewing Pending Requests
+
+Approvers can view all pending requests:
+```
+/copper-pending
+```
+
+### Update Examples
+
+**Update Contact Email:**
+```
+/copper-update person 12345 email=john.smith@newcompany.com
+```
+
+**Update Company Information:**
+```
+/copper-update company 67890 city="San Francisco" state=CA
+```
+
+**Update Opportunity Value:**
+```
+/copper-update opportunity 11111 monetary_value=150000 status=won
+```
 
 ## Advanced Features
 
@@ -330,6 +423,88 @@ docker build -t copperbot .
 docker run -d --env-file .env copperbot
 ```
 
+### AWS Lightsail Deployment
+
+Deploy to an Ubuntu Lightsail instance:
+
+1. **Create Lightsail Instance**:
+   - Choose Ubuntu 22.04 LTS
+   - Select appropriate plan (smallest should work)
+   - Open port 22 (SSH) in networking
+
+2. **Connect and Setup**:
+   ```bash
+   ssh ubuntu@your-lightsail-ip
+
+   # Update system
+   sudo apt update && sudo apt upgrade -y
+
+   # Install Python and dependencies
+   sudo apt install -y python3 python3-pip python3-venv git
+
+   # Clone repository
+   git clone <your-repo-url>
+   cd pubxcopperbot
+
+   # Create virtual environment
+   python3 -m venv venv
+   source venv/bin/activate
+
+   # Install dependencies
+   pip install -r requirements.txt
+   ```
+
+3. **Configure Environment**:
+   ```bash
+   # Copy and edit .env file
+   cp .env.example .env
+   nano .env
+   ```
+
+   Add your API keys and tokens
+
+4. **Create Systemd Service**:
+   ```bash
+   sudo nano /etc/systemd/system/copperbot.service
+   ```
+
+   Add:
+   ```ini
+   [Unit]
+   Description=Copper CRM Slack Bot
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=ubuntu
+   WorkingDirectory=/home/ubuntu/pubxcopperbot
+   Environment="PATH=/home/ubuntu/pubxcopperbot/venv/bin"
+   ExecStart=/home/ubuntu/pubxcopperbot/venv/bin/python app.py
+   Restart=always
+   RestartSec=10
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+5. **Enable and Start**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable copperbot
+   sudo systemctl start copperbot
+   sudo systemctl status copperbot
+   ```
+
+6. **View Logs**:
+   ```bash
+   sudo journalctl -u copperbot -f
+   ```
+
+7. **Auto-start on Reboot**:
+   The service will automatically start on system reboot due to the `enable` command.
+
+**Quick Deployment Script**: Use `deploy.sh` for automated setup (see repository)
+
 ## Security Notes
 
 - Never commit your `.env` file
@@ -358,6 +533,13 @@ Contributions are welcome! Please:
 4. Submit a pull request
 
 ## Changelog
+
+### v2.0.0 (2025-11-05)
+- **CSV Enrichment**: Upload CSV and get enriched file with CRM existence columns
+- **Update Workflow**: Request and approve CRM record updates via Slack
+- **Approval System**: Designated approvers can review/approve/reject changes
+- **Interactive Buttons**: Approve/reject with one click in Slack
+- **Notification System**: Auto-notify requesters of approval decisions
 
 ### v1.0.0 (2025-11-05)
 - Initial release

@@ -68,56 +68,156 @@ class CSVHandler:
 
     def process_csv_queries(self, rows: List[Dict[str, str]]) -> Dict[str, Any]:
         """
-        Process CSV rows and query Copper for each.
+        Process CSV rows and check existence in Copper CRM.
 
-        Expected CSV formats:
-        1. Simple search: columns like 'name', 'email', 'company', 'type'
-        2. Entity-specific: 'entity_type' column with 'search_field' columns
+        Checks for:
+        - Contact/Person existence
+        - Company existence
+        - Opportunity existence
 
         Args:
             rows: Parsed CSV rows
 
         Returns:
-            Results dictionary with matches and stats
+            Results dictionary with enriched rows
         """
         results = {
             'total_queries': len(rows),
             'successful': 0,
             'failed': 0,
-            'matches': []
+            'enriched_rows': []
         }
 
         for idx, row in enumerate(rows, 1):
             try:
-                # Determine entity type
-                entity_type = row.get('type', row.get('entity_type', 'people')).lower()
+                # Create enriched row with original data
+                enriched_row = dict(row)
 
-                # Build search criteria from row
-                criteria = self._build_criteria_from_row(row, entity_type)
+                # Check for contact/person
+                contact_exists = self._check_contact_exists(row)
+                enriched_row['Contact is in CRM'] = 'Yes' if contact_exists else 'No'
 
-                # Query Copper
-                matches = self._query_copper(entity_type, criteria)
+                # Check for company
+                company_exists = self._check_company_exists(row)
+                enriched_row['Company is in CRM'] = 'Yes' if company_exists else 'No'
 
-                results['matches'].append({
-                    'row_number': idx,
-                    'query': row,
-                    'entity_type': entity_type,
-                    'found': len(matches),
-                    'results': matches
-                })
+                # Check for opportunity
+                opportunity_exists = self._check_opportunity_exists(row)
+                enriched_row['Opportunity exists'] = 'Yes' if opportunity_exists else 'No'
 
+                results['enriched_rows'].append(enriched_row)
                 results['successful'] += 1
 
             except Exception as e:
                 logger.error(f"Failed to process row {idx}: {str(e)}")
                 results['failed'] += 1
-                results['matches'].append({
-                    'row_number': idx,
-                    'query': row,
-                    'error': str(e)
-                })
+                enriched_row = dict(row)
+                enriched_row['Contact is in CRM'] = 'Error'
+                enriched_row['Company is in CRM'] = 'Error'
+                enriched_row['Opportunity exists'] = 'Error'
+                results['enriched_rows'].append(enriched_row)
 
         return results
+
+    def _check_contact_exists(self, row: Dict[str, str]) -> bool:
+        """
+        Check if a contact/person exists in Copper.
+
+        Args:
+            row: CSV row data
+
+        Returns:
+            True if contact exists, False otherwise
+        """
+        criteria = {}
+
+        # Try to find by email (most accurate)
+        if 'email' in row and row['email']:
+            criteria['emails'] = [row['email']]
+        # Try by name as fallback
+        elif 'name' in row and row['name']:
+            criteria['name'] = row['name']
+        # Try by contact_name
+        elif 'contact_name' in row and row['contact_name']:
+            criteria['name'] = row['contact_name']
+        else:
+            return False
+
+        results = self.copper_client.search_people(criteria)
+        return len(results) > 0
+
+    def _check_company_exists(self, row: Dict[str, str]) -> bool:
+        """
+        Check if a company exists in Copper.
+
+        Args:
+            row: CSV row data
+
+        Returns:
+            True if company exists, False otherwise
+        """
+        criteria = {}
+
+        # Try to find by company name
+        if 'company' in row and row['company']:
+            criteria['name'] = row['company']
+        elif 'company_name' in row and row['company_name']:
+            criteria['name'] = row['company_name']
+        else:
+            return False
+
+        results = self.copper_client.search_companies(criteria)
+        return len(results) > 0
+
+    def _check_opportunity_exists(self, row: Dict[str, str]) -> bool:
+        """
+        Check if an opportunity exists in Copper.
+
+        Args:
+            row: CSV row data
+
+        Returns:
+            True if opportunity exists, False otherwise
+        """
+        criteria = {}
+
+        # Try to find by opportunity name
+        if 'opportunity' in row and row['opportunity']:
+            criteria['name'] = row['opportunity']
+        elif 'opportunity_name' in row and row['opportunity_name']:
+            criteria['name'] = row['opportunity_name']
+        elif 'deal' in row and row['deal']:
+            criteria['name'] = row['deal']
+        else:
+            return False
+
+        results = self.copper_client.search_opportunities(criteria)
+        return len(results) > 0
+
+    def generate_enriched_csv(self, enriched_rows: List[Dict[str, str]]) -> bytes:
+        """
+        Generate a CSV file with enriched data.
+
+        Args:
+            enriched_rows: Rows with added CRM existence columns
+
+        Returns:
+            CSV content as bytes
+        """
+        if not enriched_rows:
+            return b""
+
+        output = io.StringIO()
+
+        # Get all field names (original + new columns)
+        fieldnames = list(enriched_rows[0].keys())
+
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(enriched_rows)
+
+        # Convert to bytes
+        return output.getvalue().encode('utf-8')
 
     def _build_criteria_from_row(self, row: Dict[str, str], entity_type: str) -> Dict:
         """
@@ -200,38 +300,20 @@ class CSVHandler:
         Returns:
             Formatted string
         """
-        summary = f"*CSV Query Results*\n\n"
-        summary += f"📊 Total queries: {results['total_queries']}\n"
+        summary = f"*CSV Processing Results*\n\n"
+        summary += f"📊 Total rows: {results['total_queries']}\n"
         summary += f"✅ Successful: {results['successful']}\n"
         summary += f"❌ Failed: {results['failed']}\n\n"
 
-        # Show results for each row
-        output_lines = [summary]
+        # Count totals
+        enriched_rows = results['enriched_rows']
+        contacts_found = sum(1 for row in enriched_rows if row.get('Contact is in CRM') == 'Yes')
+        companies_found = sum(1 for row in enriched_rows if row.get('Company is in CRM') == 'Yes')
+        opportunities_found = sum(1 for row in enriched_rows if row.get('Opportunity exists') == 'Yes')
 
-        for match in results['matches'][:10]:  # Limit to first 10 for display
-            row_num = match['row_number']
+        summary += f"👤 Contacts in CRM: {contacts_found}/{len(enriched_rows)}\n"
+        summary += f"🏢 Companies in CRM: {companies_found}/{len(enriched_rows)}\n"
+        summary += f"💼 Opportunities exist: {opportunities_found}/{len(enriched_rows)}\n\n"
+        summary += "📥 *Download the enriched CSV file below to see all results with new columns added.*"
 
-            if 'error' in match:
-                output_lines.append(f"*Row {row_num}*: ❌ Error - {match['error']}")
-            else:
-                found = match['found']
-                entity_type = match['entity_type']
-                query_str = ', '.join(f"{k}: {v}" for k, v in match['query'].items() if v)
-
-                output_lines.append(
-                    f"*Row {row_num}*: {found} {entity_type} found\n"
-                    f"Query: {query_str}"
-                )
-
-                # Show first result if any
-                if match['results']:
-                    first_result = match['results'][0]
-                    name = first_result.get('name', 'Unknown')
-                    output_lines.append(f"  → {name}")
-
-                output_lines.append("")
-
-        if len(results['matches']) > 10:
-            output_lines.append(f"\n_Showing first 10 of {len(results['matches'])} results_")
-
-        return "\n".join(output_lines)
+        return summary

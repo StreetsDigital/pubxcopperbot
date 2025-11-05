@@ -8,6 +8,7 @@ from config import Config
 from copper_client import CopperClient
 from query_processor import QueryProcessor
 from csv_handler import CSVHandler
+from approval_system import ApprovalSystem
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +31,7 @@ app = App(token=Config.SLACK_BOT_TOKEN)
 copper_client = CopperClient()
 query_processor = QueryProcessor()
 csv_handler = CSVHandler(copper_client)
+approval_system = ApprovalSystem()
 
 
 @app.event("app_mention")
@@ -219,12 +221,24 @@ def handle_file_upload(event, say, client):
             say(text="The CSV file appears to be empty.")
             return
 
-        # Process queries
+        # Process queries and enrich with CRM data
         results = csv_handler.process_csv_queries(rows)
 
-        # Format and send results
-        formatted_results = csv_handler.format_csv_results(results)
-        say(text=formatted_results)
+        # Generate enriched CSV
+        enriched_csv = csv_handler.generate_enriched_csv(results['enriched_rows'])
+
+        # Upload enriched CSV back to Slack
+        channel_id = event.get("channel_id")
+        original_filename = file_data['name'].replace('.csv', '')
+        enriched_filename = f"{original_filename}_enriched.csv"
+
+        client.files_upload_v2(
+            channel=channel_id,
+            content=enriched_csv,
+            filename=enriched_filename,
+            title=f"CRM Lookup Results - {original_filename}",
+            initial_comment=csv_handler.format_csv_results(results)
+        )
 
     except Exception as e:
         logger.error(f"Error handling file upload: {str(e)}", exc_info=True)
@@ -284,6 +298,295 @@ def handle_copper_command(ack, command, say):
 
     except Exception as e:
         logger.error(f"Error handling /copper command: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.command("/copper-update")
+def handle_update_command(ack, command, say, client):
+    """
+    Handle /copper-update slash command to request CRM record updates.
+
+    Args:
+        ack: Acknowledge function
+        command: Command data
+        say: Function to send messages
+        client: Slack client
+    """
+    ack()
+
+    try:
+        text = command.get("text", "").strip()
+        user = command.get("user_id")
+
+        if not text:
+            say(
+                text=f"<@{user}> Usage: `/copper-update [entity_type] [entity_id] field=value field2=value2`\n"
+                     f"Example: `/copper-update person 12345 email=newemail@example.com phone=555-1234`"
+            )
+            return
+
+        # Parse command: entity_type entity_id field=value field=value
+        parts = text.split()
+        if len(parts) < 3:
+            say(text="Invalid format. Need at least: entity_type entity_id field=value")
+            return
+
+        entity_type = parts[0].lower()
+        try:
+            entity_id = int(parts[1])
+        except ValueError:
+            say(text=f"Invalid entity ID: {parts[1]}")
+            return
+
+        # Parse updates
+        updates = {}
+        for part in parts[2:]:
+            if '=' in part:
+                key, value = part.split('=', 1)
+                updates[key] = value
+
+        if not updates:
+            say(text="No updates specified. Use format: field=value")
+            return
+
+        # Get entity details for display
+        entity_data = None
+        if entity_type in ['person', 'people']:
+            entity_data = copper_client.get_person(entity_id)
+            entity_type = 'person'
+        elif entity_type in ['company', 'companies']:
+            entity_data = copper_client.get_company(entity_id)
+            entity_type = 'company'
+        elif entity_type in ['opportunity', 'opportunities']:
+            entity_data = copper_client.get_opportunity(entity_id)
+            entity_type = 'opportunity'
+
+        if not entity_data:
+            say(text=f"Could not find {entity_type} with ID {entity_id}")
+            return
+
+        entity_name = entity_data.get('name', 'Unknown')
+
+        # Create update request
+        request_id = approval_system.create_update_request(
+            requester_id=user,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            updates=updates,
+            entity_name=entity_name
+        )
+
+        request = approval_system.get_request(request_id)
+
+        # Notify user
+        say(text=f"Update request created! Request ID: `{request_id}`\n"
+                 f"Waiting for approval from authorized users.")
+
+        # Notify approvers
+        approvers = approval_system.get_approvers()
+        if approvers:
+            for approver_id in approvers:
+                try:
+                    blocks = approval_system.create_approval_blocks(request_id, request)
+                    client.chat_postMessage(
+                        channel=approver_id,
+                        text=f"New update request from <@{user}>",
+                        blocks=blocks
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify approver {approver_id}: {e}")
+        else:
+            say(text="⚠️ Warning: No approvers configured! Use `/copper-add-approver` to add approvers.")
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-update command: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.command("/copper-add-approver")
+def handle_add_approver_command(ack, command, say):
+    """
+    Handle /copper-add-approver command (admin only).
+
+    Args:
+        ack: Acknowledge function
+        command: Command data
+        say: Function to send messages
+    """
+    ack()
+
+    try:
+        text = command.get("text", "").strip()
+        user = command.get("user_id")
+
+        if not text:
+            say(text="Usage: `/copper-add-approver @user` or `/copper-add-approver USER_ID`")
+            return
+
+        # Extract user ID from mention or direct ID
+        approver_id = text.strip('<@>').split('|')[0]
+
+        approval_system.add_approver(approver_id)
+        say(text=f"✅ Added <@{approver_id}> as an approver.\n"
+                 f"Current approvers: {len(approval_system.get_approvers())}")
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-add-approver command: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.command("/copper-pending")
+def handle_pending_command(ack, command, say):
+    """
+    Handle /copper-pending command to view pending approvals.
+
+    Args:
+        ack: Acknowledge function
+        command: Command data
+        say: Function to send messages
+    """
+    ack()
+
+    try:
+        user = command.get("user_id")
+
+        if not approval_system.is_approver(user):
+            say(text="You are not authorized to view pending approvals.")
+            return
+
+        pending = approval_system.get_pending_requests()
+
+        if not pending:
+            say(text="No pending approval requests.")
+            return
+
+        message = f"*Pending Approval Requests: {len(pending)}*\n\n"
+
+        for req in pending[:10]:  # Show first 10
+            message += approval_system.format_request_for_approval(req)
+            message += f"Request ID: `{req['request_id']}`\n"
+            message += "─" * 40 + "\n\n"
+
+        if len(pending) > 10:
+            message += f"\n_Showing first 10 of {len(pending)} requests_"
+
+        say(text=message)
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-pending command: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.action(lambda action_id: action_id.startswith("approve_"))
+def handle_approve_button(ack, action, say, client):
+    """
+    Handle approve button clicks.
+
+    Args:
+        ack: Acknowledge function
+        action: Action data
+        say: Function to send messages
+        client: Slack client
+    """
+    ack()
+
+    try:
+        request_id = action["value"]
+        user_id = action["user"]["id"]
+
+        if not approval_system.is_approver(user_id):
+            say(text="You are not authorized to approve requests.")
+            return
+
+        request = approval_system.get_request(request_id)
+        if not request:
+            say(text=f"Request {request_id} not found.")
+            return
+
+        # Approve the request
+        if not approval_system.approve_request(request_id, user_id):
+            say(text="Failed to approve request.")
+            return
+
+        # Execute the update in Copper
+        entity_type = request['entity_type']
+        entity_id = request['entity_id']
+        updates = request['updates']
+
+        result = None
+        if entity_type == 'person':
+            result = copper_client.update_person(entity_id, updates)
+        elif entity_type == 'company':
+            result = copper_client.update_company(entity_id, updates)
+        elif entity_type == 'opportunity':
+            result = copper_client.update_opportunity(entity_id, updates)
+
+        if result:
+            approval_system.complete_request(request_id)
+            say(text=f"✅ Approved and updated {entity_type} '{request['entity_name']}' in Copper CRM!")
+
+            # Notify requester
+            requester_id = request['requester_id']
+            try:
+                client.chat_postMessage(
+                    channel=requester_id,
+                    text=f"Your update request for {entity_type} '{request['entity_name']}' has been approved and completed!"
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify requester: {e}")
+        else:
+            say(text=f"❌ Approved but failed to update in Copper CRM. Please check manually.")
+
+    except Exception as e:
+        logger.error(f"Error handling approve button: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.action(lambda action_id: action_id.startswith("reject_"))
+def handle_reject_button(ack, action, say, client):
+    """
+    Handle reject button clicks.
+
+    Args:
+        ack: Acknowledge function
+        action: Action data
+        say: Function to send messages
+        client: Slack client
+    """
+    ack()
+
+    try:
+        request_id = action["value"]
+        user_id = action["user"]["id"]
+
+        if not approval_system.is_approver(user_id):
+            say(text="You are not authorized to reject requests.")
+            return
+
+        request = approval_system.get_request(request_id)
+        if not request:
+            say(text=f"Request {request_id} not found.")
+            return
+
+        # Reject the request
+        if not approval_system.reject_request(request_id, user_id, "Rejected by approver"):
+            say(text="Failed to reject request.")
+            return
+
+        say(text=f"❌ Rejected update request for {request['entity_type']} '{request['entity_name']}'")
+
+        # Notify requester
+        requester_id = request['requester_id']
+        try:
+            client.chat_postMessage(
+                channel=requester_id,
+                text=f"Your update request for {request['entity_type']} '{request['entity_name']}' has been rejected."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify requester: {e}")
+
+    except Exception as e:
+        logger.error(f"Error handling reject button: {str(e)}", exc_info=True)
         say(text=f"Sorry, I encountered an error: {str(e)}")
 
 

@@ -171,3 +171,71 @@ class CopperClient:
         if isinstance(result, dict) and "error" in result:
             return None
         return result
+
+    def update_person(self, person_id: int, updates: Dict) -> Optional[Dict]:
+        """
+        Update a person/contact in Copper.
+
+        Args:
+            person_id: Person ID
+            updates: Dictionary of fields to update
+
+        Returns:
+            Updated person data or None
+        """
+        result = self._make_request("PUT", f"people/{person_id}", updates)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Failed to update person {person_id}: {result.get('error')}")
+            return None
+        return result
+
+    def update_company(self, company_id: int, updates: Dict) -> Optional[Dict]:
+        """
+        Update a company in Copper.
+
+        Args:
+            company_id: Company ID
+            updates: Dictionary of fields to update
+
+        Returns:
+            Updated company data or None
+        """
+        result = self._make_request("PUT", f"companies/{company_id}", updates)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Failed to update company {company_id}: {result.get('error')}")
+            return None
+        return result
+
+    def update_opportunity(self, opportunity_id: int, updates: Dict) -> Optional[Dict]:
+        """
+        Update an opportunity in Copper.
+
+        Args:
+            opportunity_id: Opportunity ID
+            updates: Dictionary of fields to update
+
+        Returns:
+            Updated opportunity data or None
+        """
+        result = self._make_request("PUT", f"opportunities/{opportunity_id}", updates)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Failed to update opportunity {opportunity_id}: {result.get('error')}")
+            return None
+        return result
+
+    def update_lead(self, lead_id: int, updates: Dict) -> Optional[Dict]:
+        """
+        Update a lead in Copper.
+
+        Args:
+            lead_id: Lead ID
+            updates: Dictionary of fields to update
+
+        Returns:
+            Updated lead data or None
+        """
+        result = self._make_request("PUT", f"leads/{lead_id}", updates)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Failed to update lead {lead_id}: {result.get('error')}")
+            return None
+        return result
