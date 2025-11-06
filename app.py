@@ -1,6 +1,7 @@
 """Copper CRM Slack Bot - Main Application."""
 
 import os
+import re
 import logging
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -489,7 +490,7 @@ def handle_pending_command(ack, command, say):
         say(text=f"Sorry, I encountered an error: {str(e)}")
 
 
-@app.action(lambda action_id: action_id.startswith("approve_"))
+@app.action(re.compile("^approve_"))
 def handle_approve_button(ack, action, say, client):
     """
     Handle approve button clicks.
@@ -824,7 +825,7 @@ def handle_delete_command(ack, command, say, client):
         say(text=f"Sorry, I encountered an error: {str(e)}")
 
 
-@app.action(lambda action_id: action_id.startswith("reject_"))
+@app.action(re.compile("^reject_"))
 def handle_reject_button(ack, action, say, client):
     """
     Handle reject button clicks.
