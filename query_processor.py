@@ -2,8 +2,9 @@
 
 import re
 import logging
+import json
 from typing import Dict, List, Optional, Any
-from openai import OpenAI
+from anthropic import Anthropic
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -14,9 +15,9 @@ class QueryProcessor:
 
     def __init__(self):
         """Initialize the query processor."""
-        self.openai_client = None
-        if Config.OPENAI_API_KEY:
-            self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
+        self.claude_client = None
+        if Config.ANTHROPIC_API_KEY:
+            self.claude_client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
 
     def parse_query(self, query: str) -> Dict[str, Any]:
         """
@@ -33,9 +34,9 @@ class QueryProcessor:
         # Determine entity type
         entity_type = self._determine_entity_type(query_lower)
 
-        # Use OpenAI if available for better parsing
-        if self.openai_client:
-            return self._parse_with_openai(query, entity_type)
+        # Use Claude if available for better parsing
+        if self.claude_client:
+            return self._parse_with_claude(query, entity_type)
 
         # Fallback to basic parsing
         return self._parse_basic(query, entity_type)
@@ -66,9 +67,9 @@ class QueryProcessor:
             # Default to people for general searches
             return 'people'
 
-    def _parse_with_openai(self, query: str, entity_type: str) -> Dict[str, Any]:
+    def _parse_with_claude(self, query: str, entity_type: str) -> Dict[str, Any]:
         """
-        Use OpenAI to parse the query into structured criteria.
+        Use Claude to parse the query into structured criteria.
 
         Args:
             query: Natural language query
@@ -79,51 +80,53 @@ class QueryProcessor:
         """
         try:
             prompt = f"""Convert this natural language query into Copper CRM search criteria.
-Entity type: {entity_type}
 
+Entity type: {entity_type}
 Query: "{query}"
 
-Extract:
-- Names (person or company names)
-- Email addresses
-- Phone numbers
-- Cities or locations
-- Status or stage information
-- Date ranges
-- Any other relevant search criteria
-
-Return a JSON object with the search criteria. Use these field names:
-- name: for names
-- emails: for email addresses
-- phone_numbers: for phone numbers
+Extract the following information and return ONLY a JSON object:
+- name: for person or company names
+- emails: for email addresses (as array)
+- phone_numbers: for phone numbers (as array)
 - city: for city
 - state: for state
-- tags: for tags or keywords
-- minimum_monetary_value: for opportunity amounts (if mentioned)
-- For dates, format as Unix timestamp
+- country: for country
+- tags: for tags or keywords (as array)
+- minimum_monetary_value: for opportunity amounts (if mentioned, as number)
+- status: for status or stage information
 
-Example output:
-{{
-  "name": "John Smith",
-  "city": "San Francisco",
-  "tags": ["enterprise", "active"]
-}}
+Example outputs:
+{{"name": "John Smith", "city": "San Francisco"}}
+{{"name": "Acme Corp", "city": "New York", "state": "NY"}}
+{{"minimum_monetary_value": 50000, "status": "active"}}
 
-If no specific criteria is mentioned, return an empty object {{}}.
-"""
+If no specific criteria is mentioned, return an empty object: {{}}
 
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that converts natural language to structured search queries for Copper CRM API. Always return valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
+Return ONLY the JSON object, no other text."""
+
+            message = self.claude_client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=1024,
                 temperature=0.3,
-                response_format={"type": "json_object"}
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
             )
 
-            import json
-            criteria = json.loads(response.choices[0].message.content)
+            # Extract JSON from Claude's response
+            response_text = message.content[0].text.strip()
+
+            # Remove markdown code blocks if present
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+
+            criteria = json.loads(response_text)
 
             return {
                 "entity_type": entity_type,
@@ -132,7 +135,7 @@ If no specific criteria is mentioned, return an empty object {{}}.
             }
 
         except Exception as e:
-            logger.error(f"OpenAI parsing failed: {str(e)}")
+            logger.error(f"Claude parsing failed: {str(e)}")
             return self._parse_basic(query, entity_type)
 
     def _parse_basic(self, query: str, entity_type: str) -> Dict[str, Any]:

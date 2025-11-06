@@ -20,8 +20,8 @@ class Config:
     COPPER_USER_EMAIL = os.getenv("COPPER_USER_EMAIL")
     COPPER_BASE_URL = "https://api.copper.com/developer_api/v1"
 
-    # OpenAI Configuration (for NLP)
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    # Anthropic Claude Configuration (for NLP)
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
     # Application Settings
     PORT = int(os.getenv("PORT", 3000))
