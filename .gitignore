@@ -46,6 +46,8 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
+.tox/
 
 # Slack
 .slack_credentials
