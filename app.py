@@ -917,6 +917,9 @@ def main():
     logger.info("Starting Copper CRM Slack Bot...")
     logger.info(f"Bot Token configured: {Config.SLACK_BOT_TOKEN[:20]}...")
     logger.info(f"App Token configured: {Config.SLACK_APP_TOKEN[:20]}...")
+    logger.info(f"Copper API Key configured: {Config.COPPER_API_KEY[:10] if Config.COPPER_API_KEY else 'NOT SET'}...")
+    logger.info(f"Copper Email configured: {Config.COPPER_USER_EMAIL if Config.COPPER_USER_EMAIL else 'NOT SET'}")
+    logger.info(f"Anthropic API Key configured: {Config.ANTHROPIC_API_KEY[:10] if Config.ANTHROPIC_API_KEY else 'NOT SET'}...")
     logger.info(f"Log Level: {Config.LOG_LEVEL}")
     logger.info("=" * 60)
 

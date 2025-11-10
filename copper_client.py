@@ -46,6 +46,8 @@ class CopperClient:
         logger.info(f"Endpoint: {endpoint}")
         logger.info(f"URL: {url}")
         logger.info(f"Payload: {data}")
+        logger.info(f"Auth Email: {self.headers.get('X-PW-UserEmail', 'NOT SET')}")
+        logger.info(f"API Key (first 10 chars): {self.headers.get('X-PW-AccessToken', 'NOT SET')[:10]}...")
 
         try:
             response = requests.request(
