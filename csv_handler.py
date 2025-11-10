@@ -55,9 +55,36 @@ class CSVHandler:
             # Decode content
             text = content.decode('utf-8')
 
+            # Split into lines to find actual header row
+            lines = text.splitlines()
+
+            # Find the header row - look for common CSV headers
+            # LinkedIn exports have "First Name", "Last Name", "Email Address", "Company"
+            # Generic CSVs might have "name", "email", "company"
+            header_keywords = ['name', 'email', 'company', 'first', 'last', 'position']
+
+            header_line_idx = 0
+            for idx, line in enumerate(lines):
+                line_lower = line.lower()
+                # Check if this line contains typical CSV header keywords
+                if any(keyword in line_lower for keyword in header_keywords):
+                    # Also check if it has multiple comma-separated values
+                    if line.count(',') >= 2:
+                        header_line_idx = idx
+                        logger.info(f"Found CSV header at line {idx + 1}: {line[:100]}")
+                        break
+
+            # Rejoin from the header line onwards
+            csv_content = '\n'.join(lines[header_line_idx:])
+
             # Parse CSV
-            reader = csv.DictReader(io.StringIO(text))
-            rows = list(reader)
+            reader = csv.DictReader(io.StringIO(csv_content))
+            rows = []
+            for row in reader:
+                # Filter out None keys that can appear from malformed rows
+                clean_row = {k: v for k, v in row.items() if k is not None}
+                if clean_row:  # Only add non-empty rows
+                    rows.append(clean_row)
 
             logger.info(f"Parsed {len(rows)} rows from CSV")
             return rows
@@ -132,14 +159,22 @@ class CSVHandler:
         criteria = {}
 
         # Try to find by email (most accurate)
-        if 'email' in row and row['email']:
-            criteria['emails'] = [row['email']]
+        # Support both 'email' and 'Email Address' (LinkedIn format)
+        email_value = row.get('email') or row.get('Email Address') or row.get('EMAIL')
+        if email_value:
+            criteria['emails'] = [email_value.strip()]
         # Try by name as fallback
-        elif 'name' in row and row['name']:
-            criteria['name'] = row['name']
-        # Try by contact_name
-        elif 'contact_name' in row and row['contact_name']:
-            criteria['name'] = row['contact_name']
+        # Support both 'name' and 'First Name'/'Last Name' (LinkedIn format)
+        elif row.get('name'):
+            criteria['name'] = row['name'].strip()
+        elif row.get('contact_name'):
+            criteria['name'] = row['contact_name'].strip()
+        elif row.get('First Name') or row.get('Last Name'):
+            first = (row.get('First Name') or '').strip()
+            last = (row.get('Last Name') or '').strip()
+            full_name = f"{first} {last}".strip()
+            if full_name:
+                criteria['name'] = full_name
         else:
             return False
 
@@ -156,18 +191,17 @@ class CSVHandler:
         Returns:
             True if company exists, False otherwise
         """
-        criteria = {}
-
         # Try to find by company name
-        if 'company' in row and row['company']:
-            criteria['name'] = row['company']
-        elif 'company_name' in row and row['company_name']:
-            criteria['name'] = row['company_name']
-        else:
+        # Support both lowercase and capitalized field names (LinkedIn uses 'Company')
+        company_name = (row.get('company') or row.get('Company') or
+                       row.get('company_name') or row.get('COMPANY'))
+
+        if not company_name or not company_name.strip():
             return False
 
-        results = self.copper_client.search_companies(criteria)
-        return len(results) > 0
+        # Use fuzzy matching for company search
+        companies = self.copper_client.find_companies_fuzzy(company_name.strip())
+        return len(companies) > 0
 
     def _check_opportunity_exists(self, row: Dict[str, str]) -> bool:
         """
