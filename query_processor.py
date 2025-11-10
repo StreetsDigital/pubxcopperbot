@@ -112,7 +112,7 @@ If no specific criteria is mentioned, return an empty object: {{}}
 Return ONLY the JSON object, no other text."""
 
             message = self.claude_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-5-sonnet-latest",
                 max_tokens=1024,
                 temperature=0.3,
                 messages=[
@@ -183,10 +183,19 @@ Return ONLY the JSON object, no other text."""
         else:
             # For people queries, look for names after "at", "from", "with" (likely company names)
             if entity_type == 'people':
-                company_pattern = r'(?:at|from|with|over at)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)'
-                companies = re.findall(company_pattern, query)
+                # Pattern to match company names, including "the Guardian", "NY Times", etc.
+                # More flexible pattern that handles various phrasings
+                company_keywords = r'(?:at|from|with|over at|someone at|anyone at|contacts at|people at)'
+                # Match "the X", "The X", or just "X" after keywords
+                company_pattern = company_keywords + r'\s+(?:the\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\?|$|,|;|\s+and\s+|\s+or\s+)'
+
+                companies = re.findall(company_pattern, query, re.IGNORECASE)
                 if companies:
-                    criteria['company_name'] = companies[0].strip('?,.')
+                    # Clean up the company name
+                    company_name = companies[0].strip('?,. ')
+                    # Capitalize properly
+                    company_name = company_name.title()
+                    criteria['company_name'] = company_name
                     logger.info(f"Extracted company name from query: {criteria['company_name']}")
 
             # Try to extract capitalized words as potential names
