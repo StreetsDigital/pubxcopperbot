@@ -29,16 +29,23 @@ class QueryProcessor:
         Returns:
             Dictionary with entity_type and search_criteria
         """
+        logger.info("=" * 60)
+        logger.info("🔍 STEP 1: PARSING USER QUERY")
+        logger.info(f"User query: '{query}'")
+
         query_lower = query.lower()
 
         # Determine entity type
         entity_type = self._determine_entity_type(query_lower)
+        logger.info(f"📋 Determined entity type: {entity_type}")
 
         # Use Claude if available for better parsing
         if self.claude_client:
+            logger.info("🤖 Using Claude AI for advanced query parsing...")
             return self._parse_with_claude(query, entity_type)
 
         # Fallback to basic parsing
+        logger.info("⚡ Using basic regex parsing (Claude not available)")
         return self._parse_basic(query, entity_type)
 
     def _determine_entity_type(self, query: str) -> str:
@@ -128,14 +135,20 @@ Return ONLY the JSON object, no other text."""
 
             criteria = json.loads(response_text)
 
-            return {
+            logger.info(f"✅ Claude extracted criteria: {json.dumps(criteria, indent=2)}")
+
+            result = {
                 "entity_type": entity_type,
                 "search_criteria": criteria,
                 "original_query": query
             }
+            logger.info(f"📦 Final parsed query structure: {json.dumps(result, indent=2)}")
+            logger.info("=" * 60)
+            return result
 
         except Exception as e:
-            logger.error(f"Claude parsing failed: {str(e)}")
+            logger.error(f"❌ Claude parsing failed: {str(e)}")
+            logger.info("⚡ Falling back to basic parsing...")
             return self._parse_basic(query, entity_type)
 
     def _parse_basic(self, query: str, entity_type: str) -> Dict[str, Any]:

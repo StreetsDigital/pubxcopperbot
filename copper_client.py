@@ -40,6 +40,13 @@ class CopperClient:
         """
         url = f"{self.base_url}/{endpoint}"
 
+        logger.info("=" * 60)
+        logger.info("🔌 STEP 2: CALLING COPPER CRM API")
+        logger.info(f"Method: {method}")
+        logger.info(f"Endpoint: {endpoint}")
+        logger.info(f"URL: {url}")
+        logger.info(f"Payload: {data}")
+
         try:
             response = requests.request(
                 method=method,
@@ -49,19 +56,30 @@ class CopperClient:
                 timeout=30
             )
 
+            logger.info(f"Response status code: {response.status_code}")
+
             # Handle rate limiting
             if response.status_code == 429:
-                logger.warning("Rate limit exceeded")
+                logger.warning("⚠️ Rate limit exceeded")
                 return {
                     "error": "Rate limit exceeded. Please try again in a moment.",
                     "status_code": 429
                 }
 
             response.raise_for_status()
-            return response.json() if response.content else {}
+            result = response.json() if response.content else {}
+
+            if isinstance(result, list):
+                logger.info(f"✅ API returned {len(result)} results")
+            else:
+                logger.info(f"✅ API returned: {result}")
+            logger.info("=" * 60)
+
+            return result
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"API request failed: {str(e)}")
+            logger.error(f"❌ API request failed: {str(e)}")
+            logger.info("=" * 60)
             return {
                 "error": f"API request failed: {str(e)}",
                 "status_code": getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500

@@ -102,11 +102,18 @@ def handle_mention(event, say, client):
             results = copper_client.search_projects(criteria)
 
         # Format and send results
+        logger.info("=" * 60)
+        logger.info("📤 STEP 3: FORMATTING AND SENDING RESPONSE TO USER")
+        logger.info(f"Found {len(results)} {entity_type}")
+
         formatted_results = query_processor.format_results(results, entity_type)
 
         response_text = f"*Query*: {text}\n*Found*: {len(results)} {entity_type}\n\n{formatted_results}"
 
+        logger.info(f"Response preview (first 200 chars): {response_text[:200]}...")
         say(text=response_text)
+        logger.info("✅ Response sent to user successfully!")
+        logger.info("=" * 60)
 
     except Exception as e:
         logger.error(f"Error handling mention: {str(e)}", exc_info=True)
@@ -193,11 +200,18 @@ def handle_message(event, say, client):
             results = copper_client.search_projects(criteria)
 
         # Format and send results
+        logger.info("=" * 60)
+        logger.info("📤 STEP 3: FORMATTING AND SENDING RESPONSE TO USER")
+        logger.info(f"Found {len(results)} {entity_type}")
+
         formatted_results = query_processor.format_results(results, entity_type)
 
         response_text = f"*Query*: {text}\n*Found*: {len(results)} {entity_type}\n\n{formatted_results}"
 
+        logger.info(f"Response preview (first 200 chars): {response_text[:200]}...")
         say(text=response_text)
+        logger.info("✅ Response sent to user successfully!")
+        logger.info("=" * 60)
 
     except Exception as e:
         logger.error(f"Error handling message: {str(e)}", exc_info=True)
@@ -320,11 +334,18 @@ def handle_copper_command(ack, command, say):
             results = copper_client.search_projects(criteria)
 
         # Format and send results
+        logger.info("=" * 60)
+        logger.info("📤 STEP 3: FORMATTING AND SENDING RESPONSE TO USER")
+        logger.info(f"Found {len(results)} {entity_type}")
+
         formatted_results = query_processor.format_results(results, entity_type)
 
         response_text = f"*Query*: {text}\n*Found*: {len(results)} {entity_type}\n\n{formatted_results}"
 
+        logger.info(f"Response preview (first 200 chars): {response_text[:200]}...")
         say(text=response_text)
+        logger.info("✅ Response sent to user successfully!")
+        logger.info("=" * 60)
 
     except Exception as e:
         logger.error(f"Error handling /copper command: {str(e)}", exc_info=True)
