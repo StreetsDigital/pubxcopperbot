@@ -112,7 +112,7 @@ If no specific criteria is mentioned, return an empty object: {{}}
 Return ONLY the JSON object, no other text."""
 
             message = self.claude_client.messages.create(
-                model="claude-3-5-sonnet-20240620",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=1024,
                 temperature=0.3,
                 messages=[
@@ -181,14 +181,29 @@ Return ONLY the JSON object, no other text."""
         if quoted:
             criteria['name'] = quoted[0]
         else:
-            # Try to extract capitalized words as potential names
-            words = query.split()
-            capitalized = [w for w in words if w and w[0].isupper() and len(w) > 2]
-            if capitalized and entity_type in ['people', 'companies']:
-                criteria['name'] = ' '.join(capitalized[:3])  # Take up to 3 words
+            # For people queries, look for names after "at", "from", "with" (likely company names)
+            if entity_type == 'people':
+                company_pattern = r'(?:at|from|with|over at)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)'
+                companies = re.findall(company_pattern, query)
+                if companies:
+                    criteria['company_name'] = companies[0].strip('?,.')
+                    logger.info(f"Extracted company name from query: {criteria['company_name']}")
 
-        # Extract city names (words after "in", "from", "at")
-        location_pattern = r'(?:in|from|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)'
+            # Try to extract capitalized words as potential names
+            if 'company_name' not in criteria:
+                words = query.split()
+                # Remove common words and get capitalized ones
+                capitalized = [w.strip('?,.:;!') for w in words if w and w[0].isupper() and len(w) > 2
+                             and w.lower() not in ['who', 'what', 'when', 'where', 'why', 'how']]
+                if capitalized:
+                    if entity_type == 'people':
+                        # First capitalized word might be company name
+                        criteria['company_name'] = capitalized[0]
+                    else:
+                        criteria['name'] = ' '.join(capitalized[:3])  # Take up to 3 words
+
+        # Extract city names (words after "in", "from")
+        location_pattern = r'(?:in|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)'
         locations = re.findall(location_pattern, query)
         if locations:
             criteria['city'] = locations[0]

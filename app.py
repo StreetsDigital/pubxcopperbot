@@ -86,6 +86,19 @@ def handle_mention(event, say, client):
 
         logger.info(f"Entity: {entity_type}, Criteria: {criteria}")
 
+        # Check if query is too vague (no specific criteria)
+        if not criteria or len(criteria) == 0:
+            say(
+                text=f"I'm not sure exactly what you're looking for. Could you be more specific?\n\n"
+                     f"For example:\n"
+                     f"• 'Find contacts at Venatus'\n"
+                     f"• 'Show me people at NY Times'\n"
+                     f"• 'Search for john@example.com'\n"
+                     f"• 'Companies in San Francisco'\n\n"
+                     f"Or try including a company name, person's name, email, location, or other specific details."
+            )
+            return
+
         # Query Copper
         results = []
         if entity_type == "people":
@@ -183,6 +196,19 @@ def handle_message(event, say, client):
         criteria = parsed["search_criteria"]
 
         logger.info(f"Entity: {entity_type}, Criteria: {criteria}")
+
+        # Check if query is too vague (no specific criteria)
+        if not criteria or len(criteria) == 0:
+            say(
+                text=f"I'm not sure exactly what you're looking for. Could you be more specific?\n\n"
+                     f"For example:\n"
+                     f"• 'Find contacts at Venatus'\n"
+                     f"• 'Show me people at NY Times'\n"
+                     f"• 'Search for john@example.com'\n"
+                     f"• 'Companies in San Francisco'\n\n"
+                     f"Or try including a company name, person's name, email, location, or other specific details."
+            )
+            return
 
         # Query Copper
         results = []
@@ -317,6 +343,19 @@ def handle_copper_command(ack, command, say):
         criteria = parsed["search_criteria"]
 
         logger.info(f"Entity: {entity_type}, Criteria: {criteria}")
+
+        # Check if query is too vague (no specific criteria)
+        if not criteria or len(criteria) == 0:
+            say(
+                text=f"I'm not sure exactly what you're looking for. Could you be more specific?\n\n"
+                     f"For example:\n"
+                     f"• 'Find contacts at Venatus'\n"
+                     f"• 'Show me people at NY Times'\n"
+                     f"• 'Search for john@example.com'\n"
+                     f"• 'Companies in San Francisco'\n\n"
+                     f"Or try including a company name, person's name, email, location, or other specific details."
+            )
+            return
 
         # Query Copper
         results = []
