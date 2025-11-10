@@ -607,6 +607,61 @@ class CopperClient:
             return []
         return result if isinstance(result, list) else []
 
+    def find_companies_fuzzy(self, search_term: str) -> List[Dict]:
+        """
+        Find companies using fuzzy/partial matching.
+
+        Tries multiple strategies:
+        1. Exact match
+        2. Partial match (contains)
+        3. Word-based match
+
+        Args:
+            search_term: Company name or partial name to search for
+
+        Returns:
+            List of matching companies, sorted by relevance
+        """
+        search_term_lower = search_term.lower().strip()
+        logger.info(f"Fuzzy searching for companies matching: '{search_term}'")
+
+        # Strategy 1: Try exact match first
+        exact_matches = self.search_companies({'name': search_term})
+        if exact_matches:
+            logger.info(f"Found {len(exact_matches)} exact matches")
+            return exact_matches
+
+        # Strategy 2: Get all companies and do client-side partial matching
+        # Note: Copper API doesn't support wildcard searches directly, so we fetch and filter
+        logger.info("No exact match, trying partial matching...")
+        all_companies = self.search_companies({})  # Get recent companies
+
+        if not all_companies:
+            return []
+
+        # Partial matches - company name contains search term
+        partial_matches = []
+        word_matches = []
+
+        search_words = search_term_lower.split()
+
+        for company in all_companies:
+            company_name = company.get('name', '').lower()
+
+            # Check if company name contains the search term
+            if search_term_lower in company_name:
+                partial_matches.append(company)
+                logger.info(f"Partial match: '{company.get('name')}' contains '{search_term}'")
+            # Check if any word from search term is in company name
+            elif any(word in company_name for word in search_words if len(word) > 2):
+                word_matches.append(company)
+                logger.info(f"Word match: '{company.get('name')}' contains word from '{search_term}'")
+
+        # Return partial matches first, then word matches
+        results = partial_matches + word_matches
+        logger.info(f"Fuzzy search found {len(results)} potential matches")
+        return results[:10]  # Limit to top 10 matches
+
     def search_activities_by_company(self, company_name: str, activity_type: Optional[str] = None, limit: int = 20) -> List[Dict]:
         """
         Search for activities related to a company.
@@ -621,8 +676,8 @@ class CopperClient:
         """
         logger.info(f"Searching for activities related to company: {company_name}")
 
-        # First find the company
-        companies = self.search_companies({'name': company_name})
+        # Use fuzzy search to find the company
+        companies = self.find_companies_fuzzy(company_name)
         if not companies:
             logger.info(f"No companies found matching '{company_name}'")
             return []

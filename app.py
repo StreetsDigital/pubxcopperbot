@@ -104,6 +104,28 @@ def handle_mention(event, say, client):
         if entity_type == "activities":
             # Search for activities/communications
             if 'company_name' in criteria:
+                # Use fuzzy search to find matching companies
+                companies = copper_client.find_companies_fuzzy(criteria['company_name'])
+
+                if not companies:
+                    say(text=f"❌ No companies found matching '{criteria['company_name']}'.\n\n"
+                             f"Try:\n"
+                             f"• Using a different spelling\n"
+                             f"• Using the full company name\n"
+                             f"• Checking if the company exists in your CRM")
+                    return
+
+                # If multiple matches, show "Did you mean?" suggestions
+                if len(companies) > 1:
+                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
+                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['company_name']}':\n\n{company_list}\n\n"
+                             f"Please be more specific, like:\n"
+                             f"• 'latest with {companies[0].get('name')}'\n"
+                             f"• 'comms from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
+                    return
+
+                # Single match - proceed with activities search
+                logger.info(f"✅ Using company: {companies[0].get('name')}")
                 results = copper_client.search_activities_by_company(criteria['company_name'])
             else:
                 say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
@@ -112,10 +134,26 @@ def handle_mention(event, say, client):
             # If searching for people by company name, find the company first
             if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
                 logger.info(f"Searching for company '{criteria['name']}' first...")
-                companies = copper_client.search_companies({'name': criteria['name']})
+                # Use fuzzy search for companies
+                companies = copper_client.find_companies_fuzzy(criteria['name'])
+
+                if not companies:
+                    say(text=f"❌ No companies found matching '{criteria['name']}'.\n\nTry using the full company name or check if it exists in your CRM.")
+                    return
+
+                # If multiple matches, show "Did you mean?" suggestions
+                if len(companies) > 1:
+                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
+                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['name']}':\n\n{company_list}\n\n"
+                             f"Please be more specific, like:\n"
+                             f"• 'contacts at {companies[0].get('name')}'\n"
+                             f"• 'people from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
+                    return
+
                 if companies:
                     # Get people from all matching companies
-                    logger.info(f"Found {len(companies)} matching companies, searching for people...")
+                    logger.info(f"✅ Using company: {companies[0].get('name')}")
+                    logger.info(f"Searching for people...")
                     for company in companies:
                         company_id = company.get('id')
                         if company_id:
@@ -238,6 +276,28 @@ def handle_message(event, say, client):
         if entity_type == "activities":
             # Search for activities/communications
             if 'company_name' in criteria:
+                # Use fuzzy search to find matching companies
+                companies = copper_client.find_companies_fuzzy(criteria['company_name'])
+
+                if not companies:
+                    say(text=f"❌ No companies found matching '{criteria['company_name']}'.\n\n"
+                             f"Try:\n"
+                             f"• Using a different spelling\n"
+                             f"• Using the full company name\n"
+                             f"• Checking if the company exists in your CRM")
+                    return
+
+                # If multiple matches, show "Did you mean?" suggestions
+                if len(companies) > 1:
+                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
+                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['company_name']}':\n\n{company_list}\n\n"
+                             f"Please be more specific, like:\n"
+                             f"• 'latest with {companies[0].get('name')}'\n"
+                             f"• 'comms from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
+                    return
+
+                # Single match - proceed with activities search
+                logger.info(f"✅ Using company: {companies[0].get('name')}")
                 results = copper_client.search_activities_by_company(criteria['company_name'])
             else:
                 say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
@@ -246,10 +306,26 @@ def handle_message(event, say, client):
             # If searching for people by company name, find the company first
             if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
                 logger.info(f"Searching for company '{criteria['name']}' first...")
-                companies = copper_client.search_companies({'name': criteria['name']})
+                # Use fuzzy search for companies
+                companies = copper_client.find_companies_fuzzy(criteria['name'])
+
+                if not companies:
+                    say(text=f"❌ No companies found matching '{criteria['name']}'.\n\nTry using the full company name or check if it exists in your CRM.")
+                    return
+
+                # If multiple matches, show "Did you mean?" suggestions
+                if len(companies) > 1:
+                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
+                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['name']}':\n\n{company_list}\n\n"
+                             f"Please be more specific, like:\n"
+                             f"• 'contacts at {companies[0].get('name')}'\n"
+                             f"• 'people from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
+                    return
+
                 if companies:
                     # Get people from all matching companies
-                    logger.info(f"Found {len(companies)} matching companies, searching for people...")
+                    logger.info(f"✅ Using company: {companies[0].get('name')}")
+                    logger.info(f"Searching for people...")
                     for company in companies:
                         company_id = company.get('id')
                         if company_id:
@@ -408,6 +484,28 @@ def handle_copper_command(ack, command, say):
         if entity_type == "activities":
             # Search for activities/communications
             if 'company_name' in criteria:
+                # Use fuzzy search to find matching companies
+                companies = copper_client.find_companies_fuzzy(criteria['company_name'])
+
+                if not companies:
+                    say(text=f"❌ No companies found matching '{criteria['company_name']}'.\n\n"
+                             f"Try:\n"
+                             f"• Using a different spelling\n"
+                             f"• Using the full company name\n"
+                             f"• Checking if the company exists in your CRM")
+                    return
+
+                # If multiple matches, show "Did you mean?" suggestions
+                if len(companies) > 1:
+                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
+                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['company_name']}':\n\n{company_list}\n\n"
+                             f"Please be more specific, like:\n"
+                             f"• 'latest with {companies[0].get('name')}'\n"
+                             f"• 'comms from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
+                    return
+
+                # Single match - proceed with activities search
+                logger.info(f"✅ Using company: {companies[0].get('name')}")
                 results = copper_client.search_activities_by_company(criteria['company_name'])
             else:
                 say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
@@ -416,10 +514,26 @@ def handle_copper_command(ack, command, say):
             # If searching for people by company name, find the company first
             if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
                 logger.info(f"Searching for company '{criteria['name']}' first...")
-                companies = copper_client.search_companies({'name': criteria['name']})
+                # Use fuzzy search for companies
+                companies = copper_client.find_companies_fuzzy(criteria['name'])
+
+                if not companies:
+                    say(text=f"❌ No companies found matching '{criteria['name']}'.\n\nTry using the full company name or check if it exists in your CRM.")
+                    return
+
+                # If multiple matches, show "Did you mean?" suggestions
+                if len(companies) > 1:
+                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
+                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['name']}':\n\n{company_list}\n\n"
+                             f"Please be more specific, like:\n"
+                             f"• 'contacts at {companies[0].get('name')}'\n"
+                             f"• 'people from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
+                    return
+
                 if companies:
                     # Get people from all matching companies
-                    logger.info(f"Found {len(companies)} matching companies, searching for people...")
+                    logger.info(f"✅ Using company: {companies[0].get('name')}")
+                    logger.info(f"Searching for people...")
                     for company in companies:
                         company_id = company.get('id')
                         if company_id:
