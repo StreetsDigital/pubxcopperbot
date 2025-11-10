@@ -115,18 +115,27 @@ def handle_mention(event, say, client):
                              f"• Checking if the company exists in your CRM")
                     return
 
-                # If multiple matches, show "Did you mean?" suggestions
-                if len(companies) > 1:
-                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
-                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['company_name']}':\n\n{company_list}\n\n"
-                             f"Please be more specific, like:\n"
-                             f"• 'latest with {companies[0].get('name')}'\n"
-                             f"• 'comms from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
-                    return
+                # Smart auto-selection: Pick the best company if multiple matches
+                selection = copper_client.select_best_company(companies)
+                selected_company = selection['company']
+                selected_name = selected_company.get('name')
 
-                # Single match - proceed with activities search
-                logger.info(f"✅ Using company: {companies[0].get('name')}")
-                results = copper_client.search_activities_by_company(criteria['company_name'])
+                # Notify user about the selection if multiple matches
+                if len(companies) > 1:
+                    alt_names = [c.get('name') for c in selection['alternatives'][:3]]
+                    alt_text = ", ".join(alt_names)
+                    if len(selection['alternatives']) > 3:
+                        alt_text += f", and {len(selection['alternatives']) - 3} more"
+
+                    say(text=f"✅ Using **{selected_name}** ({selection['reason']})\n\n"
+                             f"_Also found: {alt_text}_\n"
+                             f"_Be more specific if you need a different company_\n\n"
+                             f"Searching for activities...")
+                else:
+                    logger.info(f"✅ Using company: {selected_name}")
+
+                # Search activities for the selected company
+                results = copper_client.search_activities_by_company(selected_name)
             else:
                 say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
                 return
@@ -141,25 +150,32 @@ def handle_mention(event, say, client):
                     say(text=f"❌ No companies found matching '{criteria['name']}'.\n\nTry using the full company name or check if it exists in your CRM.")
                     return
 
-                # If multiple matches, show "Did you mean?" suggestions
+                # Smart auto-selection: Pick the best company if multiple matches
+                selection = copper_client.select_best_company(companies)
+                selected_company = selection['company']
+                selected_name = selected_company.get('name')
+
+                # Notify user about the selection if multiple matches
                 if len(companies) > 1:
-                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
-                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['name']}':\n\n{company_list}\n\n"
-                             f"Please be more specific, like:\n"
-                             f"• 'contacts at {companies[0].get('name')}'\n"
-                             f"• 'people from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
-                    return
+                    alt_names = [c.get('name') for c in selection['alternatives'][:3]]
+                    alt_text = ", ".join(alt_names)
+                    if len(selection['alternatives']) > 3:
+                        alt_text += f", and {len(selection['alternatives']) - 3} more"
+
+                    say(text=f"✅ Using **{selected_name}** ({selection['reason']})\n\n"
+                             f"_Also found: {alt_text}_\n"
+                             f"_Be more specific if you need a different company_\n\n"
+                             f"Searching for people...")
 
                 if companies:
-                    # Get people from all matching companies
-                    logger.info(f"✅ Using company: {companies[0].get('name')}")
+                    # Get people from the selected company
+                    logger.info(f"✅ Using company: {selected_name}")
                     logger.info(f"Searching for people...")
-                    for company in companies:
-                        company_id = company.get('id')
-                        if company_id:
-                            people = copper_client.search_people({'company_ids': [company_id]})
-                            results.extend(people)
-                    logger.info(f"Found {len(results)} total people across all matching companies")
+                    company_id = selected_company.get('id')
+                    if company_id:
+                        people = copper_client.search_people({'company_ids': [company_id]})
+                        results.extend(people)
+                    logger.info(f"Found {len(results)} people at {selected_name}")
                 else:
                     logger.info(f"No companies found matching '{criteria['name']}'")
             else:
@@ -287,18 +303,27 @@ def handle_message(event, say, client):
                              f"• Checking if the company exists in your CRM")
                     return
 
-                # If multiple matches, show "Did you mean?" suggestions
-                if len(companies) > 1:
-                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
-                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['company_name']}':\n\n{company_list}\n\n"
-                             f"Please be more specific, like:\n"
-                             f"• 'latest with {companies[0].get('name')}'\n"
-                             f"• 'comms from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
-                    return
+                # Smart auto-selection: Pick the best company if multiple matches
+                selection = copper_client.select_best_company(companies)
+                selected_company = selection['company']
+                selected_name = selected_company.get('name')
 
-                # Single match - proceed with activities search
-                logger.info(f"✅ Using company: {companies[0].get('name')}")
-                results = copper_client.search_activities_by_company(criteria['company_name'])
+                # Notify user about the selection if multiple matches
+                if len(companies) > 1:
+                    alt_names = [c.get('name') for c in selection['alternatives'][:3]]
+                    alt_text = ", ".join(alt_names)
+                    if len(selection['alternatives']) > 3:
+                        alt_text += f", and {len(selection['alternatives']) - 3} more"
+
+                    say(text=f"✅ Using **{selected_name}** ({selection['reason']})\n\n"
+                             f"_Also found: {alt_text}_\n"
+                             f"_Be more specific if you need a different company_\n\n"
+                             f"Searching for activities...")
+                else:
+                    logger.info(f"✅ Using company: {selected_name}")
+
+                # Search activities for the selected company
+                results = copper_client.search_activities_by_company(selected_name)
             else:
                 say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
                 return
@@ -313,25 +338,32 @@ def handle_message(event, say, client):
                     say(text=f"❌ No companies found matching '{criteria['name']}'.\n\nTry using the full company name or check if it exists in your CRM.")
                     return
 
-                # If multiple matches, show "Did you mean?" suggestions
+                # Smart auto-selection: Pick the best company if multiple matches
+                selection = copper_client.select_best_company(companies)
+                selected_company = selection['company']
+                selected_name = selected_company.get('name')
+
+                # Notify user about the selection if multiple matches
                 if len(companies) > 1:
-                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
-                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['name']}':\n\n{company_list}\n\n"
-                             f"Please be more specific, like:\n"
-                             f"• 'contacts at {companies[0].get('name')}'\n"
-                             f"• 'people from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
-                    return
+                    alt_names = [c.get('name') for c in selection['alternatives'][:3]]
+                    alt_text = ", ".join(alt_names)
+                    if len(selection['alternatives']) > 3:
+                        alt_text += f", and {len(selection['alternatives']) - 3} more"
+
+                    say(text=f"✅ Using **{selected_name}** ({selection['reason']})\n\n"
+                             f"_Also found: {alt_text}_\n"
+                             f"_Be more specific if you need a different company_\n\n"
+                             f"Searching for people...")
 
                 if companies:
-                    # Get people from all matching companies
-                    logger.info(f"✅ Using company: {companies[0].get('name')}")
+                    # Get people from the selected company
+                    logger.info(f"✅ Using company: {selected_name}")
                     logger.info(f"Searching for people...")
-                    for company in companies:
-                        company_id = company.get('id')
-                        if company_id:
-                            people = copper_client.search_people({'company_ids': [company_id]})
-                            results.extend(people)
-                    logger.info(f"Found {len(results)} total people across all matching companies")
+                    company_id = selected_company.get('id')
+                    if company_id:
+                        people = copper_client.search_people({'company_ids': [company_id]})
+                        results.extend(people)
+                    logger.info(f"Found {len(results)} people at {selected_name}")
                 else:
                     logger.info(f"No companies found matching '{criteria['name']}'")
             else:
@@ -495,18 +527,27 @@ def handle_copper_command(ack, command, say):
                              f"• Checking if the company exists in your CRM")
                     return
 
-                # If multiple matches, show "Did you mean?" suggestions
-                if len(companies) > 1:
-                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
-                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['company_name']}':\n\n{company_list}\n\n"
-                             f"Please be more specific, like:\n"
-                             f"• 'latest with {companies[0].get('name')}'\n"
-                             f"• 'comms from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
-                    return
+                # Smart auto-selection: Pick the best company if multiple matches
+                selection = copper_client.select_best_company(companies)
+                selected_company = selection['company']
+                selected_name = selected_company.get('name')
 
-                # Single match - proceed with activities search
-                logger.info(f"✅ Using company: {companies[0].get('name')}")
-                results = copper_client.search_activities_by_company(criteria['company_name'])
+                # Notify user about the selection if multiple matches
+                if len(companies) > 1:
+                    alt_names = [c.get('name') for c in selection['alternatives'][:3]]
+                    alt_text = ", ".join(alt_names)
+                    if len(selection['alternatives']) > 3:
+                        alt_text += f", and {len(selection['alternatives']) - 3} more"
+
+                    say(text=f"✅ Using **{selected_name}** ({selection['reason']})\n\n"
+                             f"_Also found: {alt_text}_\n"
+                             f"_Be more specific if you need a different company_\n\n"
+                             f"Searching for activities...")
+                else:
+                    logger.info(f"✅ Using company: {selected_name}")
+
+                # Search activities for the selected company
+                results = copper_client.search_activities_by_company(selected_name)
             else:
                 say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
                 return
@@ -521,25 +562,32 @@ def handle_copper_command(ack, command, say):
                     say(text=f"❌ No companies found matching '{criteria['name']}'.\n\nTry using the full company name or check if it exists in your CRM.")
                     return
 
-                # If multiple matches, show "Did you mean?" suggestions
+                # Smart auto-selection: Pick the best company if multiple matches
+                selection = copper_client.select_best_company(companies)
+                selected_company = selection['company']
+                selected_name = selected_company.get('name')
+
+                # Notify user about the selection if multiple matches
                 if len(companies) > 1:
-                    company_list = "\n".join([f"• {c.get('name')}" for c in companies[:5]])
-                    say(text=f"🤔 I found {len(companies)} companies matching '{criteria['name']}':\n\n{company_list}\n\n"
-                             f"Please be more specific, like:\n"
-                             f"• 'contacts at {companies[0].get('name')}'\n"
-                             f"• 'people from {companies[1].get('name') if len(companies) > 1 else companies[0].get('name')}'")
-                    return
+                    alt_names = [c.get('name') for c in selection['alternatives'][:3]]
+                    alt_text = ", ".join(alt_names)
+                    if len(selection['alternatives']) > 3:
+                        alt_text += f", and {len(selection['alternatives']) - 3} more"
+
+                    say(text=f"✅ Using **{selected_name}** ({selection['reason']})\n\n"
+                             f"_Also found: {alt_text}_\n"
+                             f"_Be more specific if you need a different company_\n\n"
+                             f"Searching for people...")
 
                 if companies:
-                    # Get people from all matching companies
-                    logger.info(f"✅ Using company: {companies[0].get('name')}")
+                    # Get people from the selected company
+                    logger.info(f"✅ Using company: {selected_name}")
                     logger.info(f"Searching for people...")
-                    for company in companies:
-                        company_id = company.get('id')
-                        if company_id:
-                            people = copper_client.search_people({'company_ids': [company_id]})
-                            results.extend(people)
-                    logger.info(f"Found {len(results)} total people across all matching companies")
+                    company_id = selected_company.get('id')
+                    if company_id:
+                        people = copper_client.search_people({'company_ids': [company_id]})
+                        results.extend(people)
+                    logger.info(f"Found {len(results)} people at {selected_name}")
                 else:
                     logger.info(f"No companies found matching '{criteria['name']}'")
             else:

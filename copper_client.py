@@ -680,6 +680,96 @@ class CopperClient:
 
         return results[:10]  # Limit to top 10 matches
 
+    def select_best_company(self, companies: List[Dict]) -> Dict[str, Any]:
+        """
+        Select the best company from multiple matches based on recent activity.
+
+        Strategy: Pick the company with the most recent activity date.
+        This assumes the most actively used company is the "correct" one.
+
+        Args:
+            companies: List of company matches
+
+        Returns:
+            Dictionary with:
+            - company: The selected company
+            - reason: Why this company was selected
+            - alternatives: Other companies that were considered
+        """
+        if not companies:
+            return None
+
+        if len(companies) == 1:
+            return {
+                'company': companies[0],
+                'reason': 'only match',
+                'alternatives': []
+            }
+
+        logger.info(f"Selecting best company from {len(companies)} matches...")
+
+        # Check activities for each company to find most recent
+        best_company = None
+        best_activity_date = 0
+        company_activity_info = []
+
+        for company in companies:
+            company_id = company.get('id')
+            company_name = company.get('name')
+
+            # Get recent activities for this company
+            criteria = {'parent': {'id': company_id, 'type': 'company'}}
+            activities = self.search_activities(criteria)
+
+            if activities:
+                # Get the most recent activity date
+                most_recent = max(activities, key=lambda a: a.get('activity_date', 0))
+                activity_date = most_recent.get('activity_date', 0)
+            else:
+                activity_date = 0
+
+            company_activity_info.append({
+                'company': company,
+                'activity_date': activity_date,
+                'activity_count': len(activities)
+            })
+
+            logger.info(f"  {company_name}: {len(activities)} activities, most recent: {activity_date}")
+
+            if activity_date > best_activity_date:
+                best_activity_date = activity_date
+                best_company = company
+
+        # If no activities found for any company, pick the first one
+        if not best_company:
+            logger.info("No activities found for any company, using first match")
+            best_company = companies[0]
+            reason = "first match (no activity data)"
+        else:
+            # Calculate days since last activity
+            import time
+            if best_activity_date > 0:
+                days_ago = int((time.time() - best_activity_date) / 86400)
+                if days_ago == 0:
+                    reason = f"most recent activity today"
+                elif days_ago == 1:
+                    reason = f"most recent activity yesterday"
+                else:
+                    reason = f"most recent activity {days_ago} days ago"
+            else:
+                reason = "most records"
+
+        # Get alternatives (other companies not selected)
+        alternatives = [c['company'] for c in company_activity_info if c['company'].get('id') != best_company.get('id')]
+
+        logger.info(f"✅ Selected: {best_company.get('name')} ({reason})")
+
+        return {
+            'company': best_company,
+            'reason': reason,
+            'alternatives': alternatives
+        }
+
     def search_activities_by_company(self, company_name: str, activity_type: Optional[str] = None, limit: int = 20) -> List[Dict]:
         """
         Search for activities related to a company.
