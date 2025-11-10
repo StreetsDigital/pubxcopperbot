@@ -35,6 +35,16 @@ csv_handler = CSVHandler(copper_client)
 approval_system = ApprovalSystem()
 
 
+# Add middleware to log all incoming events
+@app.middleware
+def log_request(logger, body, next):
+    """Log all incoming requests for debugging."""
+    event_type = body.get("event", {}).get("type", "unknown")
+    logger.info(f"=== Received event: {event_type} ===")
+    logger.info(f"Full body: {body}")
+    return next()
+
+
 @app.event("app_mention")
 def handle_mention(event, say, client):
     """
@@ -45,6 +55,7 @@ def handle_mention(event, say, client):
         say: Function to send messages
         client: Slack client
     """
+    logger.info(f">>> APP_MENTION event handler triggered")
     try:
         user = event.get("user")
         text = event.get("text", "")
@@ -112,12 +123,17 @@ def handle_message(event, say, client):
         say: Function to send messages
         client: Slack client
     """
+    logger.info(f">>> MESSAGE event handler triggered")
+    logger.info(f"Event details: channel_type={event.get('channel_type')}, subtype={event.get('subtype')}, user={event.get('user')}")
+
     # Only respond to DMs (channel_type = 'im')
     if event.get("channel_type") != "im":
+        logger.info(f"Ignoring message - not a DM (channel_type={event.get('channel_type')})")
         return
 
     # Ignore bot messages
     if event.get("subtype") == "bot_message":
+        logger.info(f"Ignoring message - bot message")
         return
 
     try:
@@ -198,6 +214,7 @@ def handle_file_upload(event, say, client):
         say: Function to send messages
         client: Slack client
     """
+    logger.info(f">>> FILE_SHARED event handler triggered")
     try:
         file_id = event.get("file_id")
         user_id = event.get("user_id")
@@ -875,12 +892,19 @@ def handle_reject_button(ack, action, say, client):
 
 def main():
     """Start the Slack bot."""
+    logger.info("=" * 60)
     logger.info("Starting Copper CRM Slack Bot...")
+    logger.info(f"Bot Token configured: {Config.SLACK_BOT_TOKEN[:20]}...")
+    logger.info(f"App Token configured: {Config.SLACK_APP_TOKEN[:20]}...")
+    logger.info(f"Log Level: {Config.LOG_LEVEL}")
+    logger.info("=" * 60)
 
     try:
         # Start the app using Socket Mode
         handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
-        logger.info("Bot is running in Socket Mode!")
+        logger.info("✅ Bot is running in Socket Mode!")
+        logger.info("Waiting for events... Try sending a message to the bot in Slack")
+        logger.info("=" * 60)
         handler.start()
 
     except Exception as e:
