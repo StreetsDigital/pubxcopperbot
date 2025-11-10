@@ -112,7 +112,7 @@ If no specific criteria is mentioned, return an empty object: {{}}
 Return ONLY the JSON object, no other text."""
 
             message = self.claude_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-5-sonnet-20240620",
                 max_tokens=1024,
                 temperature=0.3,
                 messages=[
