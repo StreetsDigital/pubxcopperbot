@@ -606,3 +606,48 @@ class CopperClient:
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
+
+    def search_activities_by_company(self, company_name: str, activity_type: Optional[str] = None, limit: int = 20) -> List[Dict]:
+        """
+        Search for activities related to a company.
+
+        Args:
+            company_name: Name of the company
+            activity_type: Optional - filter by type (0=email, 1=user, 2=note, etc.)
+            limit: Maximum number of results
+
+        Returns:
+            List of activities
+        """
+        logger.info(f"Searching for activities related to company: {company_name}")
+
+        # First find the company
+        companies = self.search_companies({'name': company_name})
+        if not companies:
+            logger.info(f"No companies found matching '{company_name}'")
+            return []
+
+        all_activities = []
+        for company in companies[:5]:  # Limit to first 5 matching companies
+            company_id = company.get('id')
+            company_actual_name = company.get('name')
+            logger.info(f"Found company: {company_actual_name} (ID: {company_id})")
+
+            # Search for activities related to this company
+            criteria = {'parent': {'id': company_id, 'type': 'company'}}
+            if activity_type is not None:
+                criteria['activity_types'] = [{'id': activity_type}]
+
+            activities = self.search_activities(criteria)
+            logger.info(f"Found {len(activities)} activities for {company_actual_name}")
+
+            # Add company name to each activity for context
+            for activity in activities:
+                activity['_company_name'] = company_actual_name
+
+            all_activities.extend(activities)
+
+        # Sort by date (most recent first)
+        all_activities.sort(key=lambda x: x.get('activity_date', 0), reverse=True)
+
+        return all_activities[:limit]

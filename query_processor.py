@@ -56,23 +56,36 @@ class QueryProcessor:
             query: Query text
 
         Returns:
-            Entity type (people, companies, opportunities, leads, tasks, projects)
+            Entity type (people, companies, opportunities, leads, tasks, projects, activities)
         """
+        # Check for activities/communications keywords FIRST (most specific)
+        if any(keyword in query for keyword in [
+            'email', 'emails', 'call', 'calls', 'meeting', 'meetings',
+            'communication', 'communications', 'comms', 'activity', 'activities',
+            'latest', 'recent', 'last', 'conversation', 'conversations',
+            'interaction', 'interactions', 'touchpoint', 'touchpoints'
+        ]):
+            return 'activities'
+
+        # Then check for other specific entity types
         if any(keyword in query for keyword in ['task', 'tasks', 'todo', 'todos', 'to-do']):
             return 'tasks'
         elif any(keyword in query for keyword in ['project', 'projects']):
             return 'projects'
-        elif any(keyword in query for keyword in ['person', 'people', 'contact', 'contacts']):
-            return 'people'
-        elif any(keyword in query for keyword in ['company', 'companies', 'organization', 'business']):
-            return 'companies'
-        elif any(keyword in query for keyword in ['opportunity', 'opportunities', 'deal', 'deals', 'sale', 'sales']):
+        elif any(keyword in query for keyword in ['opportunity', 'opportunities', 'deal', 'deals', 'sale', 'sales', 'pipeline']):
             return 'opportunities'
         elif any(keyword in query for keyword in ['lead', 'leads', 'prospect', 'prospects']):
             return 'leads'
-        else:
-            # Default to people for general searches
+        elif any(keyword in query for keyword in ['company', 'companies', 'organization', 'business', 'businesses']):
+            return 'companies'
+        elif any(keyword in query for keyword in ['person', 'people', 'contact', 'contacts', 'who', 'anyone', 'someone']):
             return 'people'
+        else:
+            # If query mentions "at/from [Company]", likely asking about people
+            if any(word in query for word in [' at ', ' from ', ' with ']):
+                return 'people'
+            # Default to activities for generic "tell me about" queries
+            return 'activities'
 
     def _parse_with_claude(self, query: str, entity_type: str) -> Dict[str, Any]:
         """
@@ -91,23 +104,43 @@ class QueryProcessor:
 Entity type: {entity_type}
 Query: "{query}"
 
-Extract the following information and return ONLY a JSON object:
-- name: for person or company names
-- emails: for email addresses (as array)
-- phone_numbers: for phone numbers (as array)
-- city: for city
-- state: for state
-- country: for country
+Extract the following information based on the entity type and return ONLY a JSON object:
+
+For people/contacts:
+- name: person name or company name (if asking "who at Company X")
+- emails: email addresses (as array)
+- phone_numbers: phone numbers (as array)
+
+For companies:
+- name: company name
+
+For opportunities/deals:
+- name: opportunity name
+- minimum_monetary_value: for amounts (as number)
+- status: for pipeline stage
+
+For activities/communications:
+- company_name: the company to search activities for
+- activity_type: type of communication (email, call, meeting, or leave empty for all)
+- time_frame: "recent", "latest", "last_week", etc.
+
+For tasks/projects:
+- name: task or project name
+- related_to: company or person name
+
+General fields (any type):
+- city, state, country: for location-based searches
 - tags: for tags or keywords (as array)
-- minimum_monetary_value: for opportunity amounts (if mentioned, as number)
-- status: for status or stage information
 
 Example outputs:
-{{"name": "John Smith", "city": "San Francisco"}}
-{{"name": "Acme Corp", "city": "New York", "state": "NY"}}
-{{"minimum_monetary_value": 50000, "status": "active"}}
+{{"name": "John Smith"}}
+{{"name": "Acme Corp"}}
+{{"company_name": "Venatus"}}
+{{"company_name": "Guardian", "time_frame": "latest"}}
+{{"minimum_monetary_value": 50000}}
 
-If no specific criteria is mentioned, return an empty object: {{}}
+If the query is vague and needs clarification, include:
+{{"clarify": true, "reason": "not enough specific details provided"}}
 
 Return ONLY the JSON object, no other text."""
 
@@ -153,7 +186,7 @@ Return ONLY the JSON object, no other text."""
 
     def _parse_basic(self, query: str, entity_type: str) -> Dict[str, Any]:
         """
-        Basic fallback parsing without OpenAI.
+        Basic fallback parsing without Claude.
 
         Args:
             query: Natural language query
@@ -163,6 +196,43 @@ Return ONLY the JSON object, no other text."""
             Structured query data
         """
         criteria = {}
+
+        # For activities, extract company name differently
+        if entity_type == 'activities':
+            # Patterns like "latest with X", "comms from X", "about X"
+            activity_patterns = [
+                r'(?:with|from|about|for|regarding|at)\s+(?:the\s+)?([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*?)(?:\s+please|\s+thanks|,|\?|$)',
+                r'(?:latest|recent)\s+(?:comms|communications|activity|activities|emails|calls|meetings)?\s*(?:with|from|for|at)?\s+(?:the\s+)?([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*?)(?:\s+please|\s+thanks|,|\?|$)',
+                # "tell me about X" or "what about X"
+                r'(?:tell me about|what about|about)\s+(?:the\s+)?([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*?)(?:\s+please|\s+thanks|,|\?|$)',
+            ]
+
+            for pattern in activity_patterns:
+                matches = re.findall(pattern, query, re.IGNORECASE)
+                if matches:
+                    company_name = matches[0].strip('?,. ')
+                    # Remove polite words
+                    for word in ['please', 'thanks', 'thank you']:
+                        if company_name.lower().endswith(word):
+                            company_name = company_name[:-len(word)].strip()
+                    company_name = company_name.title()
+                    criteria['company_name'] = company_name
+                    logger.info(f"Extracted company name for activities: {criteria['company_name']}")
+                    break
+
+            # Detect activity type
+            if 'email' in query.lower():
+                criteria['activity_type'] = 'email'
+            elif 'call' in query.lower():
+                criteria['activity_type'] = 'call'
+            elif 'meeting' in query.lower():
+                criteria['activity_type'] = 'meeting'
+
+            return {
+                "entity_type": entity_type,
+                "search_criteria": criteria,
+                "original_query": query
+            }
 
         # Extract email addresses
         email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
@@ -259,6 +329,12 @@ Return ONLY the JSON object, no other text."""
                 formatted.append(self._format_opportunity(item))
             elif entity_type == 'leads':
                 formatted.append(self._format_lead(item))
+            elif entity_type == 'activities':
+                formatted.append(self._format_activity(item))
+            elif entity_type == 'tasks':
+                formatted.append(self._format_task(item))
+            elif entity_type == 'projects':
+                formatted.append(self._format_project(item))
 
         return "\n\n".join(formatted) + truncated_msg
 
@@ -298,3 +374,59 @@ Return ONLY the JSON object, no other text."""
         status = lead.get('status', 'Unknown')
 
         return f"*{name}*\n📧 {email}\n🏢 {company}\n📊 Status: {status}"
+
+    def _format_activity(self, activity: Dict) -> str:
+        """Format an activity record."""
+        import datetime
+
+        # Activity type mapping
+        activity_types = {
+            0: '📧 Email',
+            1: '👤 User Activity',
+            2: '📝 Note',
+            3: '📞 Call',
+            4: '🤝 Meeting',
+            5: '📄 Document',
+        }
+
+        activity_type_id = activity.get('type', {}).get('id', 0) if isinstance(activity.get('type'), dict) else 0
+        activity_icon = activity_types.get(activity_type_id, '📌 Activity')
+
+        # Get details
+        details = activity.get('details', 'No details')
+        company_name = activity.get('_company_name', 'Unknown Company')
+
+        # Format date
+        activity_date = activity.get('activity_date')
+        if activity_date:
+            try:
+                # Convert Unix timestamp to readable date
+                dt = datetime.datetime.fromtimestamp(activity_date)
+                date_str = dt.strftime('%b %d, %Y at %I:%M %p')
+            except:
+                date_str = 'Unknown date'
+        else:
+            date_str = 'Unknown date'
+
+        # Truncate details if too long
+        if len(details) > 200:
+            details = details[:200] + '...'
+
+        return f"{activity_icon}\n🏢 {company_name}\n📅 {date_str}\n{details}"
+
+    def _format_task(self, task: Dict) -> str:
+        """Format a task record."""
+        name = task.get('name', 'Untitled Task')
+        status = '✅ Complete' if task.get('completed') else '⏳ Pending'
+        assignee = task.get('assignee', {}).get('name', 'Unassigned') if task.get('assignee') else 'Unassigned'
+        due_date = task.get('due_date', 'No due date')
+
+        return f"*{name}*\n{status}\n👤 Assigned to: {assignee}\n📅 Due: {due_date}"
+
+    def _format_project(self, project: Dict) -> str:
+        """Format a project record."""
+        name = project.get('name', 'Untitled Project')
+        status = project.get('status', 'Unknown')
+        assignee = project.get('assignee', {}).get('name', 'Unassigned') if project.get('assignee') else 'Unassigned'
+
+        return f"*{name}*\n📊 Status: {status}\n👤 Owner: {assignee}"

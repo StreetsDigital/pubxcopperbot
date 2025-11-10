@@ -101,7 +101,14 @@ def handle_mention(event, say, client):
 
         # Query Copper
         results = []
-        if entity_type == "people":
+        if entity_type == "activities":
+            # Search for activities/communications
+            if 'company_name' in criteria:
+                results = copper_client.search_activities_by_company(criteria['company_name'])
+            else:
+                say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
+                return
+        elif entity_type == "people":
             # If searching for people by company name, find the company first
             if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
                 logger.info(f"Searching for company '{criteria['name']}' first...")
@@ -228,7 +235,14 @@ def handle_message(event, say, client):
 
         # Query Copper
         results = []
-        if entity_type == "people":
+        if entity_type == "activities":
+            # Search for activities/communications
+            if 'company_name' in criteria:
+                results = copper_client.search_activities_by_company(criteria['company_name'])
+            else:
+                say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
+                return
+        elif entity_type == "people":
             # If searching for people by company name, find the company first
             if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
                 logger.info(f"Searching for company '{criteria['name']}' first...")
@@ -391,7 +405,14 @@ def handle_copper_command(ack, command, say):
 
         # Query Copper
         results = []
-        if entity_type == "people":
+        if entity_type == "activities":
+            # Search for activities/communications
+            if 'company_name' in criteria:
+                results = copper_client.search_activities_by_company(criteria['company_name'])
+            else:
+                say(text="To search for activities, please specify a company name.\nFor example: 'latest comms from Venatus' or 'emails with Guardian'")
+                return
+        elif entity_type == "people":
             # If searching for people by company name, find the company first
             if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
                 logger.info(f"Searching for company '{criteria['name']}' first...")
