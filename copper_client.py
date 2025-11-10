@@ -661,14 +661,22 @@ class CopperClient:
         for company in all_companies:
             company_name = company.get('name', '').lower()
 
-            # Check if company name contains the search term
+            # Strategy 1: Full search term appears in company name
+            # e.g., "guardian" matches "The Guardian Media Group"
             if search_term_lower in company_name:
                 partial_matches.append(company)
                 logger.info(f"✅ Partial match: '{company.get('name')}' contains '{search_term}'")
-            # Check if any word from search term is in company name
-            elif any(word in company_name for word in search_words if len(word) > 2):
-                word_matches.append(company)
-                logger.info(f"✅ Word match: '{company.get('name')}' contains word from '{search_term}'")
+
+            # Strategy 2: Word-based matching - BUT ONLY if search has 2+ words
+            # This prevents matching common words like "Digital", "Media", "Group"
+            # e.g., "NY Times" can match companies with "NY" or "Times"
+            # but "Digital" alone won't match every "Digital" company
+            elif len(search_words) >= 2:
+                # Check if MULTIPLE words from search appear in company name
+                matching_words = [word for word in search_words if len(word) > 2 and word in company_name]
+                if len(matching_words) >= 2:
+                    word_matches.append(company)
+                    logger.info(f"✅ Word match: '{company.get('name')}' contains {len(matching_words)} words from '{search_term}'")
 
         # Return partial matches first, then word matches
         results = partial_matches + word_matches
