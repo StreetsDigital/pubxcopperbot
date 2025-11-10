@@ -112,7 +112,7 @@ If no specific criteria is mentioned, return an empty object: {{}}
 Return ONLY the JSON object, no other text."""
 
             message = self.claude_client.messages.create(
-                model="claude-3-5-sonnet-latest",
+                model="claude-3-5-sonnet-20240620",
                 max_tokens=1024,
                 temperature=0.3,
                 messages=[
@@ -186,17 +186,22 @@ Return ONLY the JSON object, no other text."""
                 # Pattern to match company names, including "the Guardian", "NY Times", etc.
                 # More flexible pattern that handles various phrasings
                 company_keywords = r'(?:at|from|with|over at|someone at|anyone at|contacts at|people at)'
-                # Match "the X", "The X", or just "X" after keywords
-                company_pattern = company_keywords + r'\s+(?:the\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\?|$|,|;|\s+and\s+|\s+or\s+)'
+                # Match "the X", "The X", or just "X" after keywords, excluding polite words
+                company_pattern = company_keywords + r'\s+(?:the\s+)?([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*?)(?:\s+please|\s+thanks|,|\?|$|;|\s+and\s+|\s+or\s+)'
 
                 companies = re.findall(company_pattern, query, re.IGNORECASE)
                 if companies:
-                    # Clean up the company name
+                    # Clean up the company name - remove trailing polite words
                     company_name = companies[0].strip('?,. ')
+                    # Remove common polite words that might have been captured
+                    polite_words = ['please', 'thanks', 'thank you']
+                    for word in polite_words:
+                        if company_name.lower().endswith(word):
+                            company_name = company_name[:-len(word)].strip()
                     # Capitalize properly
                     company_name = company_name.title()
-                    criteria['company_name'] = company_name
-                    logger.info(f"Extracted company name from query: {criteria['company_name']}")
+                    criteria['name'] = company_name  # Use 'name' field to search companies
+                    logger.info(f"Extracted company name from query: {criteria['name']}")
 
             # Try to extract capitalized words as potential names
             if 'company_name' not in criteria:

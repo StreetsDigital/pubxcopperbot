@@ -102,7 +102,23 @@ def handle_mention(event, say, client):
         # Query Copper
         results = []
         if entity_type == "people":
-            results = copper_client.search_people(criteria)
+            # If searching for people by company name, find the company first
+            if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
+                logger.info(f"Searching for company '{criteria['name']}' first...")
+                companies = copper_client.search_companies({'name': criteria['name']})
+                if companies:
+                    # Get people from all matching companies
+                    logger.info(f"Found {len(companies)} matching companies, searching for people...")
+                    for company in companies:
+                        company_id = company.get('id')
+                        if company_id:
+                            people = copper_client.search_people({'company_ids': [company_id]})
+                            results.extend(people)
+                    logger.info(f"Found {len(results)} total people across all matching companies")
+                else:
+                    logger.info(f"No companies found matching '{criteria['name']}'")
+            else:
+                results = copper_client.search_people(criteria)
         elif entity_type == "companies":
             results = copper_client.search_companies(criteria)
         elif entity_type == "opportunities":
@@ -213,7 +229,23 @@ def handle_message(event, say, client):
         # Query Copper
         results = []
         if entity_type == "people":
-            results = copper_client.search_people(criteria)
+            # If searching for people by company name, find the company first
+            if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
+                logger.info(f"Searching for company '{criteria['name']}' first...")
+                companies = copper_client.search_companies({'name': criteria['name']})
+                if companies:
+                    # Get people from all matching companies
+                    logger.info(f"Found {len(companies)} matching companies, searching for people...")
+                    for company in companies:
+                        company_id = company.get('id')
+                        if company_id:
+                            people = copper_client.search_people({'company_ids': [company_id]})
+                            results.extend(people)
+                    logger.info(f"Found {len(results)} total people across all matching companies")
+                else:
+                    logger.info(f"No companies found matching '{criteria['name']}'")
+            else:
+                results = copper_client.search_people(criteria)
         elif entity_type == "companies":
             results = copper_client.search_companies(criteria)
         elif entity_type == "opportunities":
@@ -360,7 +392,23 @@ def handle_copper_command(ack, command, say):
         # Query Copper
         results = []
         if entity_type == "people":
-            results = copper_client.search_people(criteria)
+            # If searching for people by company name, find the company first
+            if 'name' in criteria and not any(k in criteria for k in ['emails', 'phone_numbers']):
+                logger.info(f"Searching for company '{criteria['name']}' first...")
+                companies = copper_client.search_companies({'name': criteria['name']})
+                if companies:
+                    # Get people from all matching companies
+                    logger.info(f"Found {len(companies)} matching companies, searching for people...")
+                    for company in companies:
+                        company_id = company.get('id')
+                        if company_id:
+                            people = copper_client.search_people({'company_ids': [company_id]})
+                            results.extend(people)
+                    logger.info(f"Found {len(results)} total people across all matching companies")
+                else:
+                    logger.info(f"No companies found matching '{criteria['name']}'")
+            else:
+                results = copper_client.search_people(criteria)
         elif entity_type == "companies":
             results = copper_client.search_companies(criteria)
         elif entity_type == "opportunities":
