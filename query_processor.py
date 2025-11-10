@@ -393,7 +393,7 @@ Return ONLY the JSON object, no other text."""
         activity_icon = activity_types.get(activity_type_id, '📌 Activity')
 
         # Get details
-        details = activity.get('details', 'No details')
+        details = activity.get('details') or 'No details'
         company_name = activity.get('_company_name', 'Unknown Company')
 
         # Format date
@@ -409,7 +409,7 @@ Return ONLY the JSON object, no other text."""
             date_str = 'Unknown date'
 
         # Truncate details if too long
-        if len(details) > 200:
+        if details and len(details) > 200:
             details = details[:200] + '...'
 
         return f"{activity_icon}\n🏢 {company_name}\n📅 {date_str}\n{details}"
