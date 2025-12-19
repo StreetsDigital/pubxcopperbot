@@ -11,7 +11,14 @@ A Slack bot that allows resellers and sales people to query Copper CRM using nat
   - Leads
   - Tasks
   - Projects
-  - All operations require approval workflow (see [CRUD_OPERATIONS.md](CRUD_OPERATIONS.md))
+  - Admin users can bypass approval; others require approval workflow
+
+- **Natural Language Task Creation**: Create tasks using plain English
+  - "remind me to follow up with CNN next Monday"
+  - "call John at Acme Corp tomorrow at 2pm"
+  - "urgent: review contract for Disney by Friday"
+  - Tasks automatically link to companies/opportunities in CRM
+  - Syncs to Google Calendar via Copper's native integration
 
 - **Natural Language Queries**: Ask questions in plain English
   - "Find contacts at Acme Corp"
@@ -19,10 +26,21 @@ A Slack bot that allows resellers and sales people to query Copper CRM using nat
   - "Search for tasks due this week"
   - "List active projects"
 
-- **CSV Enrichment**: Upload a CSV file and get it back with CRM data
-  - Automatically checks if contacts, companies, and opportunities exist in CRM
-  - Adds three new columns: "Contact is in CRM", "Company is in CRM", "Opportunity exists"
-  - Returns enriched CSV file for easy analysis
+- **Smart File Processing**: Upload CSV or Excel files for intelligent processing
+  - **CRM Lookup**: Enriches file with CRM data (contacts, companies, opportunities)
+  - **Opportunity Import**: Bulk create/update opportunities in your pipeline
+  - **Contact Reconciliation**: Cross-reference LinkedIn exports with CRM, detect mismatches
+
+- **Admin Users (Bypass Approval)**: Designated admins can execute operations directly
+  - Add admins with `/copper-add-admin @user`
+  - Admin actions are logged but don't require approval
+  - Perfect for RevOps/CRM managers
+
+- **Contact Reconciliation**: Smart data hygiene for your CRM
+  - Upload a LinkedIn export or contact list
+  - Bot cross-references with CRM contacts
+  - Shows mismatches (e.g., "John moved from Acme to TechCorp")
+  - One-click "Update these contacts?" confirmation
 
 - **Create Records with Approval**: Create new CRM records directly from Slack
   - Request creation via `/copper-create` command
@@ -127,6 +145,18 @@ Under **OAuth & Permissions**, add these Bot Token Scopes:
 - Short Description: "Request to delete a CRM record"
 - Usage Hint: "person 12345"
 
+**Command 7: `/copper-task`**
+- Short Description: "Create a task with natural language"
+- Usage Hint: "follow up with CNN next Monday"
+
+**Command 8: `/copper-add-admin`**
+- Short Description: "Add an admin (bypasses approval)"
+- Usage Hint: "@username"
+
+**Command 9: `/copper-map-user`**
+- Short Description: "Map Slack user to Copper user ID"
+- Usage Hint: "@user 12345"
+
 #### Install App
 
 1. Go to **Install App**
@@ -163,8 +193,14 @@ Under **OAuth & Permissions**, add these Bot Token Scopes:
    COPPER_API_KEY=your-copper-api-key-here
    COPPER_USER_EMAIL=your-email@company.com
 
-   # Optional: OpenAI for enhanced NLP
-   OPENAI_API_KEY=your-openai-api-key-here
+   # Optional: Anthropic Claude for enhanced NLP
+   ANTHROPIC_API_KEY=your-anthropic-api-key-here
+
+   # Optional: Default pipeline for opportunity imports
+   DEFAULT_PIPELINE_NAME=Bid Intelligence - Supply
+
+   # Optional: Default task assignee Copper user ID
+   DEFAULT_TASK_ASSIGNEE_ID=12345
    ```
 
 5. Run the bot:
@@ -542,6 +578,40 @@ Deploy to an Ubuntu Lightsail instance:
 
 **Quick Deployment Script**: Use `deploy.sh` for automated setup (see repository)
 
+### CI/CD Auto-Deployment to Lightsail
+
+The bot includes a GitHub Actions workflow that automatically deploys to your Lightsail instance when you push to the `main` branch.
+
+**Setup Required Secrets** in your GitHub repository (Settings → Secrets and variables → Actions):
+
+| Secret | Description |
+|--------|-------------|
+| `LIGHTSAIL_HOST` | Your Lightsail instance IP address |
+| `LIGHTSAIL_USER` | SSH username (usually `ubuntu`) |
+| `LIGHTSAIL_SSH_KEY` | Private SSH key for authentication |
+
+**How to get your SSH key:**
+1. In Lightsail, go to Account → SSH Keys
+2. Download your default key or create a new one
+3. Copy the contents of the private key file
+4. Paste it into the `LIGHTSAIL_SSH_KEY` secret
+
+**Workflow:**
+1. Push to `main` branch
+2. Tests run automatically
+3. If tests pass, deploys to Lightsail
+4. Bot restarts with new code
+
+**Manual Deploy:**
+```bash
+ssh ubuntu@your-lightsail-ip
+cd ~/pubxcopperbot
+git pull origin main
+source venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart copperbot
+```
+
 ## Security Notes
 
 - Never commit your `.env` file
@@ -571,6 +641,21 @@ Contributions are welcome! Please:
 
 ## Changelog
 
+### v4.0.0 (2025-12-19) - RevOps Power Release
+- **Natural Language Tasks**: `/copper-task follow up with CNN next Monday`
+  - Smart date parsing (tomorrow, next week, Friday, in 3 days)
+  - Auto-links to companies/opportunities
+  - Syncs to Google Calendar via Copper
+- **Admin Users**: `/copper-add-admin` for users who bypass approval
+- **Smart File Processing**: Intelligent detection of file type
+  - Opportunity import to configured pipeline
+  - Contact reconciliation with mismatch detection
+  - LinkedIn data cross-referencing
+- **Excel Support**: Now accepts .xlsx and .xls files
+- **Pipeline Configuration**: Set default pipeline for opportunity imports
+- **User Mapping**: `/copper-map-user` maps Slack users to Copper IDs
+- **Persistent State**: All data survives bot restarts
+
 ### v3.0.0 (2025-11-05) - Full CRUD Release
 - **Full CRUD Operations**: Complete Create, Read, Update, Delete for all entities
 - **6 Entity Types**: People, Companies, Opportunities, Leads, Tasks, Projects
@@ -592,4 +677,4 @@ Contributions are welcome! Please:
 - Natural language query support
 - CSV file upload processing
 - Multiple entity type support
-- OpenAI integration for enhanced NLP
+- Claude integration for enhanced NLP

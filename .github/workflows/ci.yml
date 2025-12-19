@@ -118,3 +118,34 @@ jobs:
       run: |
         pylint **/*.py --exit-zero || true
       continue-on-error: true
+
+  deploy:
+    name: Deploy to Lightsail
+    needs: [test]  # Only deploy after tests pass
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - name: Deploy to Lightsail
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.LIGHTSAIL_HOST }}
+        username: ${{ secrets.LIGHTSAIL_USER }}
+        key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+        script: |
+          cd ~/pubxcopperbot
+          git fetch origin main
+          git reset --hard origin/main
+          source venv/bin/activate
+          pip install -r requirements.txt
+          sudo systemctl restart copperbot
+          echo "Deployment complete at $(date)"
+
+    - name: Verify deployment
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.LIGHTSAIL_HOST }}
+        username: ${{ secrets.LIGHTSAIL_USER }}
+        key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+        script: |
+          sudo systemctl is-active copperbot && echo "Service is running" || echo "Service failed to start"
