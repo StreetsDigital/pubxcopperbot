@@ -27,6 +27,9 @@ class Config:
     PORT = int(os.getenv("PORT", 3000))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+    # Persistent storage directory (defaults to ./data)
+    DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+
     @classmethod
     def validate(cls):
         """Validate required configuration."""
