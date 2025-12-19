@@ -2,6 +2,9 @@
 
 import logging
 import json
+import os
+import fcntl
+import tempfile
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from config import Config
@@ -10,35 +13,134 @@ logger = logging.getLogger(__name__)
 
 
 class ApprovalSystem:
-    """Manage approval workflow for CRM updates."""
+    """Manage approval workflow for CRM updates with persistent storage."""
 
-    def __init__(self):
-        """Initialize the approval system."""
-        # In-memory storage for pending approvals
-        # In production, use a database
-        self.pending_approvals = {}
-        self.approval_history = []
-        self.approvers = set()  # Set of Slack user IDs who can approve
+    def __init__(self, data_dir: Optional[str] = None):
+        """Initialize the approval system with persistent storage.
 
-    def add_approver(self, user_id: str):
+        Args:
+            data_dir: Directory for storing persistent data. Defaults to Config.DATA_DIR.
+        """
+        self.data_dir = data_dir or Config.DATA_DIR
+        self.state_file = os.path.join(self.data_dir, "approval_state.json")
+        self.lock_file = os.path.join(self.data_dir, ".approval_state.lock")
+
+        # Ensure data directory exists
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        # Load persisted state or initialize empty
+        state = self._load_state()
+        self.pending_approvals: Dict[str, Dict] = state.get("pending_approvals", {})
+        self.approval_history: List[Dict] = state.get("approval_history", [])
+        self.approvers: set = set(state.get("approvers", []))
+        # Slack user ID -> Copper user ID mapping
+        self.user_mapping: Dict[str, int] = state.get("user_mapping", {})
+
+        logger.info(f"Loaded approval state: {len(self.pending_approvals)} pending, "
+                    f"{len(self.approvers)} approvers, {len(self.user_mapping)} user mappings")
+
+    def _load_state(self) -> Dict:
+        """Load state from persistent storage.
+
+        Returns:
+            Dictionary with pending_approvals, approval_history, and approvers.
+        """
+        if not os.path.exists(self.state_file):
+            logger.info(f"No existing state file at {self.state_file}, starting fresh")
+            return {}
+
+        try:
+            with open(self.state_file, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
+                try:
+                    state = json.load(f)
+                    return state
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except json.JSONDecodeError as e:
+            logger.error(f"Corrupted state file, starting fresh: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error loading state: {e}")
+            return {}
+
+    def _save_state(self) -> bool:
+        """Save current state to persistent storage atomically.
+
+        Uses atomic write (write to temp file, then rename) to prevent corruption.
+        Uses file locking to prevent race conditions.
+
+        Returns:
+            True if save was successful.
+        """
+        state = {
+            "pending_approvals": self.pending_approvals,
+            "approval_history": self.approval_history,
+            "approvers": list(self.approvers),  # Convert set to list for JSON
+            "user_mapping": self.user_mapping,
+            "last_updated": datetime.now().isoformat()
+        }
+
+        try:
+            # Create lock file if it doesn't exist
+            lock_fd = os.open(self.lock_file, os.O_CREAT | os.O_RDWR)
+            try:
+                # Acquire exclusive lock
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+                # Write to temporary file first (atomic write pattern)
+                fd, temp_path = tempfile.mkstemp(
+                    dir=self.data_dir,
+                    prefix='.approval_state_',
+                    suffix='.tmp'
+                )
+                try:
+                    with os.fdopen(fd, 'w') as f:
+                        json.dump(state, f, indent=2)
+
+                    # Atomic rename (on POSIX systems)
+                    os.replace(temp_path, self.state_file)
+                    logger.debug("State saved successfully")
+                    return True
+                except Exception:
+                    # Clean up temp file on failure
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                    raise
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+        except Exception as e:
+            logger.error(f"Error saving state: {e}")
+            return False
+
+    def add_approver(self, user_id: str) -> bool:
         """
         Add a user as an approver.
 
         Args:
             user_id: Slack user ID
+
+        Returns:
+            True if saved successfully.
         """
         self.approvers.add(user_id)
         logger.info(f"Added approver: {user_id}")
+        return self._save_state()
 
-    def remove_approver(self, user_id: str):
+    def remove_approver(self, user_id: str) -> bool:
         """
         Remove a user from approvers.
 
         Args:
             user_id: Slack user ID
+
+        Returns:
+            True if saved successfully.
         """
         self.approvers.discard(user_id)
         logger.info(f"Removed approver: {user_id}")
+        return self._save_state()
 
     def is_approver(self, user_id: str) -> bool:
         """
@@ -60,6 +162,46 @@ class ApprovalSystem:
             List of Slack user IDs
         """
         return list(self.approvers)
+
+    # =========================================================================
+    # User Mapping (Slack ID -> Copper ID)
+    # =========================================================================
+
+    def set_user_mapping(self, slack_user_id: str, copper_user_id: int) -> bool:
+        """
+        Map a Slack user ID to a Copper user ID.
+
+        Args:
+            slack_user_id: Slack user ID
+            copper_user_id: Copper user ID
+
+        Returns:
+            True if saved successfully.
+        """
+        self.user_mapping[slack_user_id] = copper_user_id
+        logger.info(f"Mapped Slack user {slack_user_id} to Copper user {copper_user_id}")
+        return self._save_state()
+
+    def get_copper_user_id(self, slack_user_id: str) -> Optional[int]:
+        """
+        Get the Copper user ID for a Slack user.
+
+        Args:
+            slack_user_id: Slack user ID
+
+        Returns:
+            Copper user ID or None if not mapped.
+        """
+        return self.user_mapping.get(slack_user_id)
+
+    def get_user_mappings(self) -> Dict[str, int]:
+        """
+        Get all user mappings.
+
+        Returns:
+            Dictionary of Slack user ID -> Copper user ID.
+        """
+        return dict(self.user_mapping)
 
     def create_request(
         self,
@@ -106,6 +248,7 @@ class ApprovalSystem:
 
         self.pending_approvals[request_id] = request
         logger.info(f"Created {operation} request: {request_id}")
+        self._save_state()
 
         return request_id
 
@@ -193,6 +336,7 @@ class ApprovalSystem:
         request['approved_at'] = datetime.now().isoformat()
 
         self.approval_history.append(dict(request))
+        self._save_state()
 
         logger.info(f"Request {request_id} approved by {approver_id}")
         return True
@@ -232,26 +376,35 @@ class ApprovalSystem:
 
         # Remove from pending
         del self.pending_approvals[request_id]
+        self._save_state()
 
         logger.info(f"Request {request_id} rejected by {approver_id}")
         return True
 
-    def complete_request(self, request_id: str):
+    def complete_request(self, request_id: str) -> bool:
         """
         Mark a request as completed after successful update.
 
         Args:
             request_id: Request ID
+
+        Returns:
+            True if request was found and completed.
         """
-        if request_id in self.pending_approvals:
-            request = self.pending_approvals[request_id]
-            request['status'] = 'completed'
-            request['completed_at'] = datetime.now().isoformat()
+        if request_id not in self.pending_approvals:
+            logger.warning(f"Request {request_id} not found for completion")
+            return False
 
-            self.approval_history.append(dict(request))
-            del self.pending_approvals[request_id]
+        request = self.pending_approvals[request_id]
+        request['status'] = 'completed'
+        request['completed_at'] = datetime.now().isoformat()
 
-            logger.info(f"Request {request_id} completed")
+        self.approval_history.append(dict(request))
+        del self.pending_approvals[request_id]
+        self._save_state()
+
+        logger.info(f"Request {request_id} completed")
+        return True
 
     def format_request_for_approval(self, request: Dict) -> str:
         """

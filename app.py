@@ -9,6 +9,7 @@ from copper_client import CopperClient
 from query_processor import QueryProcessor
 from csv_handler import CSVHandler
 from approval_system import ApprovalSystem
+from task_processor import TaskProcessor
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +33,7 @@ copper_client = CopperClient()
 query_processor = QueryProcessor()
 csv_handler = CSVHandler(copper_client)
 approval_system = ApprovalSystem()
+task_processor = TaskProcessor(copper_client)
 
 
 @app.event("app_mention")
@@ -58,12 +60,17 @@ def handle_mention(event, say, client):
                      "For example:\n"
                      "• 'Find contacts at Acme Corp'\n"
                      "• 'Show me opportunities over $50k'\n"
-                     "• 'Search for companies in San Francisco'\n"
+                     "• 'remind me to follow up with CNN next week'\n"
                      "• Or upload a CSV file with search criteria!"
             )
             return
 
-        # Process the query
+        # Check if this is a task request
+        if task_processor.is_task_request(text):
+            _handle_task_request(text, user, say, client)
+            return
+
+        # Process as a search query
         logger.info(f"Processing query from {user}: {text}")
         say(text=f"Searching Copper CRM... :mag:")
 
@@ -136,20 +143,21 @@ def handle_message(event, say, client):
                      "• 'Show me companies in New York'\n"
                      "• 'List opportunities over $100,000'\n"
                      "• 'Search for leads from Acme Corp'\n\n"
+                     "*Task Creation:*\n"
+                     "• 'remind me to follow up with CNN next week'\n"
+                     "• 'call John at Acme tomorrow at 2pm'\n\n"
                      "*CSV Upload:*\n"
-                     "Upload a CSV file with search criteria. Supported columns:\n"
-                     "• type/entity_type: people, companies, opportunities, leads\n"
-                     "• name: Person or company name\n"
-                     "• email: Email address\n"
-                     "• phone: Phone number\n"
-                     "• city, state, country: Location info\n"
-                     "• tags: Comma-separated tags\n"
-                     "• min_value: Minimum opportunity value\n\n"
+                     "Upload a CSV file with search criteria.\n\n"
                      "Need more help? Contact your admin!"
             )
             return
 
-        # Process the query
+        # Check if this is a task request
+        if task_processor.is_task_request(text):
+            _handle_task_request(text, user, say, client)
+            return
+
+        # Process as a search query
         logger.info(f"Processing DM query from {user}: {text}")
         say(text="Searching Copper CRM... :mag:")
 
@@ -869,6 +877,173 @@ def handle_reject_button(ack, action, say, client):
 
     except Exception as e:
         logger.error(f"Error handling reject button: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+# =============================================================================
+# Task Creation (Natural Language)
+# =============================================================================
+
+def _handle_task_request(text: str, user: str, say, client):
+    """
+    Handle a natural language task request.
+
+    Args:
+        text: The task request text
+        user: Slack user ID of the requester
+        say: Function to send messages
+        client: Slack client
+    """
+    try:
+        say(text="Creating task... :pencil:")
+
+        # Parse the task
+        parsed = task_processor.parse_task(text, user)
+        logger.info(f"Parsed task: {parsed}")
+
+        # Find related entity in Copper
+        related_entity = None
+        if parsed.get('related_entity_name'):
+            related_entity = task_processor.find_related_entity(
+                parsed['related_entity_name'],
+                parsed.get('related_entity_type')
+            )
+
+        # Get Copper user ID for assignee
+        assignee_slack_id = parsed.get('assignee_slack_id', user)
+        assignee_copper_id = approval_system.get_copper_user_id(assignee_slack_id)
+
+        # Fall back to default if no mapping
+        if not assignee_copper_id and Config.DEFAULT_TASK_ASSIGNEE_ID:
+            try:
+                assignee_copper_id = int(Config.DEFAULT_TASK_ASSIGNEE_ID)
+            except (ValueError, TypeError):
+                pass
+
+        # Build the Copper task payload
+        task_data = task_processor.build_copper_task(
+            parsed,
+            assignee_copper_id=assignee_copper_id,
+            related_entity=related_entity
+        )
+
+        # Create approval request for the task
+        request_id = approval_system.create_request(
+            requester_id=user,
+            operation='create',
+            entity_type='task',
+            data=task_data,
+            entity_name=parsed['task_description']
+        )
+
+        # Format confirmation
+        confirmation = task_processor.format_task_confirmation(parsed, related_entity)
+
+        say(text=f"Task request submitted for approval:\n\n{confirmation}\n\n"
+                 f"Request ID: `{request_id}`")
+
+        # Notify approvers
+        request = approval_system.get_request(request_id)
+        approvers = approval_system.get_approvers()
+        if approvers:
+            for approver_id in approvers:
+                try:
+                    blocks = approval_system.create_approval_blocks(request_id, request)
+                    client.chat_postMessage(
+                        channel=approver_id,
+                        text=f"New task request from <@{user}>",
+                        blocks=blocks
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify approver {approver_id}: {e}")
+        else:
+            say(text="Warning: No approvers configured. Use `/copper-add-approver` to add approvers.")
+
+    except Exception as e:
+        logger.error(f"Error handling task request: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I couldn't create that task: {str(e)}")
+
+
+@app.command("/copper-task")
+def handle_task_command(ack, command, say, client):
+    """
+    Handle /copper-task slash command for natural language task creation.
+
+    Usage: /copper-task follow up with CNN next Monday
+    """
+    ack()
+
+    try:
+        text = command.get("text", "").strip()
+        user = command.get("user_id")
+
+        if not text:
+            say(
+                text="*Create a task with natural language!*\n\n"
+                     "*Examples:*\n"
+                     "• `/copper-task follow up with CNN next Monday`\n"
+                     "• `/copper-task call John at Acme Corp tomorrow at 2pm`\n"
+                     "• `/copper-task send proposal to Netflix by Friday`\n"
+                     "• `/copper-task urgent: review contract for Disney`\n\n"
+                     "*Supported date formats:*\n"
+                     "• today, tomorrow, next week\n"
+                     "• Monday, Tuesday, etc. (this week)\n"
+                     "• next Monday, next Friday\n"
+                     "• in 3 days, in 2 weeks\n"
+                     "• by Jan 15, on 1/20"
+            )
+            return
+
+        _handle_task_request(text, user, say, client)
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-task command: {str(e)}", exc_info=True)
+        say(text=f"Sorry, I encountered an error: {str(e)}")
+
+
+@app.command("/copper-map-user")
+def handle_map_user_command(ack, command, say):
+    """
+    Handle /copper-map-user command to map Slack users to Copper users.
+
+    Usage: /copper-map-user @slackuser 12345
+    """
+    ack()
+
+    try:
+        text = command.get("text", "").strip()
+        user = command.get("user_id")
+
+        if not text:
+            say(
+                text="*Map a Slack user to their Copper user ID*\n\n"
+                     "Usage: `/copper-map-user @user COPPER_USER_ID`\n"
+                     "Example: `/copper-map-user @john 12345`\n\n"
+                     "To find your Copper user ID, go to Settings > Users in Copper."
+            )
+            return
+
+        parts = text.split()
+        if len(parts) < 2:
+            say(text="Invalid format. Use: `/copper-map-user @user COPPER_USER_ID`")
+            return
+
+        # Extract Slack user ID from mention
+        slack_user_id = parts[0].strip('<@>').split('|')[0]
+
+        try:
+            copper_user_id = int(parts[1])
+        except ValueError:
+            say(text=f"Invalid Copper user ID: {parts[1]}. Must be a number.")
+            return
+
+        # Save the mapping
+        approval_system.set_user_mapping(slack_user_id, copper_user_id)
+
+        say(text=f"Mapped <@{slack_user_id}> to Copper user ID `{copper_user_id}`")
+
+    except Exception as e:
+        logger.error(f"Error handling /copper-map-user command: {str(e)}", exc_info=True)
         say(text=f"Sorry, I encountered an error: {str(e)}")
 
 

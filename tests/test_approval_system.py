@@ -1,13 +1,15 @@
 """Tests for approval system."""
 
 import pytest
+import os
+import json
 from approval_system import ApprovalSystem
 
 
 @pytest.fixture
-def approval_system():
-    """Create an ApprovalSystem instance for testing."""
-    return ApprovalSystem()
+def approval_system(tmp_path):
+    """Create an ApprovalSystem instance for testing with isolated storage."""
+    return ApprovalSystem(data_dir=str(tmp_path))
 
 
 class TestApprovalSystemApprovers:
@@ -177,3 +179,90 @@ class TestApprovalSystemApproval:
 
         request = approval_system.get_request(request_id)
         assert request is None  # Removed after completion
+
+
+class TestApprovalSystemPersistence:
+    """Test persistence across restarts."""
+
+    def test_approvers_persist(self, tmp_path):
+        """Test that approvers survive a restart."""
+        # Create first instance and add approvers
+        system1 = ApprovalSystem(data_dir=str(tmp_path))
+        system1.add_approver("user1")
+        system1.add_approver("user2")
+
+        # Create second instance (simulating restart)
+        system2 = ApprovalSystem(data_dir=str(tmp_path))
+
+        # Approvers should be loaded
+        assert system2.is_approver("user1")
+        assert system2.is_approver("user2")
+        assert len(system2.get_approvers()) == 2
+
+    def test_pending_requests_persist(self, tmp_path):
+        """Test that pending requests survive a restart."""
+        # Create first instance and add a request
+        system1 = ApprovalSystem(data_dir=str(tmp_path))
+        request_id = system1.create_request(
+            requester_id="user123",
+            operation="update",
+            entity_type="person",
+            entity_id=456,
+            data={"email": "new@example.com"},
+            entity_name="John Doe"
+        )
+
+        # Create second instance (simulating restart)
+        system2 = ApprovalSystem(data_dir=str(tmp_path))
+
+        # Request should be loaded
+        request = system2.get_request(request_id)
+        assert request is not None
+        assert request["entity_type"] == "person"
+        assert request["status"] == "pending"
+
+    def test_state_file_created(self, tmp_path):
+        """Test that state file is created."""
+        system = ApprovalSystem(data_dir=str(tmp_path))
+        system.add_approver("user1")
+
+        state_file = os.path.join(str(tmp_path), "approval_state.json")
+        assert os.path.exists(state_file)
+
+        # Verify file contents
+        with open(state_file, 'r') as f:
+            state = json.load(f)
+        assert "user1" in state["approvers"]
+
+    def test_corrupted_state_file_handled(self, tmp_path):
+        """Test that corrupted state file doesn't crash the system."""
+        # Write corrupted JSON
+        state_file = os.path.join(str(tmp_path), "approval_state.json")
+        with open(state_file, 'w') as f:
+            f.write("{invalid json")
+
+        # Should start fresh without crashing
+        system = ApprovalSystem(data_dir=str(tmp_path))
+        assert len(system.get_approvers()) == 0
+        assert len(system.get_pending_requests()) == 0
+
+    def test_history_persists(self, tmp_path):
+        """Test that approval history survives restart."""
+        system1 = ApprovalSystem(data_dir=str(tmp_path))
+        system1.add_approver("approver1")
+
+        request_id = system1.create_request(
+            requester_id="user123",
+            operation="create",
+            entity_type="company",
+            data={"name": "Test Co"},
+            entity_name="Test Co"
+        )
+        system1.approve_request(request_id, "approver1")
+        system1.complete_request(request_id)
+
+        # Restart
+        system2 = ApprovalSystem(data_dir=str(tmp_path))
+
+        # History should be preserved
+        assert len(system2.approval_history) == 2  # approved + completed entries
