@@ -33,11 +33,13 @@ class ApprovalSystem:
         self.pending_approvals: Dict[str, Dict] = state.get("pending_approvals", {})
         self.approval_history: List[Dict] = state.get("approval_history", [])
         self.approvers: set = set(state.get("approvers", []))
+        # Admin users can bypass approval (auto-approve their own actions)
+        self.admins: set = set(state.get("admins", []))
         # Slack user ID -> Copper user ID mapping
         self.user_mapping: Dict[str, int] = state.get("user_mapping", {})
 
         logger.info(f"Loaded approval state: {len(self.pending_approvals)} pending, "
-                    f"{len(self.approvers)} approvers, {len(self.user_mapping)} user mappings")
+                    f"{len(self.approvers)} approvers, {len(self.admins)} admins")
 
     def _load_state(self) -> Dict:
         """Load state from persistent storage.
@@ -77,6 +79,7 @@ class ApprovalSystem:
             "pending_approvals": self.pending_approvals,
             "approval_history": self.approval_history,
             "approvers": list(self.approvers),  # Convert set to list for JSON
+            "admins": list(self.admins),  # Admin users bypass approval
             "user_mapping": self.user_mapping,
             "last_updated": datetime.now().isoformat()
         }
@@ -162,6 +165,61 @@ class ApprovalSystem:
             List of Slack user IDs
         """
         return list(self.approvers)
+
+    # =========================================================================
+    # Admin Users (Bypass Approval)
+    # =========================================================================
+
+    def add_admin(self, user_id: str) -> bool:
+        """
+        Add a user as an admin (can bypass approval for their own actions).
+
+        Args:
+            user_id: Slack user ID
+
+        Returns:
+            True if saved successfully.
+        """
+        self.admins.add(user_id)
+        # Admins are also approvers by default
+        self.approvers.add(user_id)
+        logger.info(f"Added admin: {user_id}")
+        return self._save_state()
+
+    def remove_admin(self, user_id: str) -> bool:
+        """
+        Remove a user from admins.
+
+        Args:
+            user_id: Slack user ID
+
+        Returns:
+            True if saved successfully.
+        """
+        self.admins.discard(user_id)
+        logger.info(f"Removed admin: {user_id}")
+        return self._save_state()
+
+    def is_admin(self, user_id: str) -> bool:
+        """
+        Check if a user is an admin (can bypass approval).
+
+        Args:
+            user_id: Slack user ID
+
+        Returns:
+            True if user is an admin
+        """
+        return user_id in self.admins
+
+    def get_admins(self) -> List[str]:
+        """
+        Get list of all admins.
+
+        Returns:
+            List of Slack user IDs
+        """
+        return list(self.admins)
 
     # =========================================================================
     # User Mapping (Slack ID -> Copper ID)

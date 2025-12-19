@@ -1,12 +1,39 @@
-"""CSV file handler for batch queries."""
+"""CSV and Excel file handler for batch queries and opportunity imports."""
 
 import csv
 import io
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
 import requests
+from config import Config
+
+# Try to import openpyxl for Excel support
+try:
+    import openpyxl
+    EXCEL_SUPPORT = True
+except ImportError:
+    EXCEL_SUPPORT = False
 
 logger = logging.getLogger(__name__)
+
+# Standard field mappings for opportunity imports
+OPPORTUNITY_FIELD_MAPPINGS = {
+    # Name fields
+    'name': ['name', 'opportunity_name', 'opportunity', 'deal', 'deal_name', 'title'],
+    # Company fields
+    'company_name': ['company', 'company_name', 'account', 'account_name', 'advertiser', 'client'],
+    # Contact fields
+    'primary_contact_name': ['contact', 'contact_name', 'main_contact', 'primary_contact'],
+    # Value fields
+    'monetary_value': ['value', 'amount', 'deal_value', 'revenue', 'monetary_value', 'monthly_impressions', 'impressions'],
+    # Date fields
+    'close_date': ['close_date', 'expected_close', 'close', 'end_date'],
+    # Status/Stage
+    'status': ['status', 'stage', 'pipeline_stage'],
+    # Custom fields
+    'monthly_impressions': ['monthly_impressions', 'impressions', 'monthly_imps', 'imps'],
+}
 
 
 class CSVHandler:
@@ -65,6 +92,72 @@ class CSVHandler:
         except Exception as e:
             logger.error(f"Failed to parse CSV: {str(e)}")
             raise
+
+    def parse_excel(self, content: bytes) -> List[Dict[str, str]]:
+        """
+        Parse Excel (.xlsx) content.
+
+        Args:
+            content: Excel file content as bytes
+
+        Returns:
+            List of dictionaries representing rows
+        """
+        if not EXCEL_SUPPORT:
+            raise ImportError("openpyxl is required for Excel support. Install with: pip install openpyxl")
+
+        try:
+            # Load workbook from bytes
+            workbook = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+            sheet = workbook.active
+
+            rows = []
+            headers = []
+
+            for row_idx, row in enumerate(sheet.iter_rows(values_only=True)):
+                if row_idx == 0:
+                    # First row is headers
+                    headers = [str(cell).strip() if cell else f'column_{i}' for i, cell in enumerate(row)]
+                else:
+                    # Skip empty rows
+                    if all(cell is None or str(cell).strip() == '' for cell in row):
+                        continue
+
+                    row_dict = {}
+                    for i, cell in enumerate(row):
+                        if i < len(headers):
+                            # Convert cell value to string
+                            value = str(cell).strip() if cell is not None else ''
+                            row_dict[headers[i]] = value
+                    rows.append(row_dict)
+
+            logger.info(f"Parsed {len(rows)} rows from Excel")
+            return rows
+
+        except Exception as e:
+            logger.error(f"Failed to parse Excel: {str(e)}")
+            raise
+
+    def parse_file(self, content: bytes, filename: str) -> List[Dict[str, str]]:
+        """
+        Parse a file based on its extension.
+
+        Args:
+            content: File content as bytes
+            filename: Original filename
+
+        Returns:
+            List of dictionaries representing rows
+        """
+        filename_lower = filename.lower()
+
+        if filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls'):
+            return self.parse_excel(content)
+        elif filename_lower.endswith('.csv'):
+            return self.parse_csv(content)
+        else:
+            # Try CSV as default
+            return self.parse_csv(content)
 
     def process_csv_queries(self, rows: List[Dict[str, str]]) -> Dict[str, Any]:
         """
@@ -317,3 +410,387 @@ class CSVHandler:
         summary += "📥 *Download the enriched CSV file below to see all results with new columns added.*"
 
         return summary
+
+    # =========================================================================
+    # Opportunity Import (Create/Update from CSV/Excel)
+    # =========================================================================
+
+    def detect_import_mode(self, rows: List[Dict[str, str]]) -> str:
+        """
+        Detect if the CSV is for lookup or import based on columns.
+
+        Args:
+            rows: Parsed CSV rows
+
+        Returns:
+            'import' if it looks like opportunity data, 'lookup' otherwise
+        """
+        if not rows:
+            return 'lookup'
+
+        # Get column names from first row
+        columns = set(k.lower() for k in rows[0].keys())
+
+        # Check for import indicators
+        import_indicators = {
+            'value', 'amount', 'revenue', 'monetary_value',
+            'close_date', 'expected_close', 'stage', 'pipeline_stage',
+            'monthly_impressions', 'impressions'
+        }
+
+        matches = columns.intersection(import_indicators)
+        if len(matches) >= 1:
+            return 'import'
+
+        return 'lookup'
+
+    def _normalize_field_name(self, field: str) -> str:
+        """
+        Normalize a field name to its canonical form.
+
+        Args:
+            field: Field name from CSV
+
+        Returns:
+            Canonical field name
+        """
+        field_lower = field.lower().strip()
+
+        for canonical, aliases in OPPORTUNITY_FIELD_MAPPINGS.items():
+            if field_lower in aliases:
+                return canonical
+
+        return field_lower
+
+    def _parse_monetary_value(self, value: str) -> Optional[float]:
+        """
+        Parse a monetary value from various formats.
+
+        Args:
+            value: Value string (e.g., "$50,000", "50000", "50k")
+
+        Returns:
+            Float value or None
+        """
+        if not value:
+            return None
+
+        try:
+            # Remove common currency symbols and whitespace
+            cleaned = value.strip().replace('$', '').replace(',', '').replace(' ', '')
+
+            # Handle "k" suffix for thousands
+            if cleaned.lower().endswith('k'):
+                return float(cleaned[:-1]) * 1000
+
+            # Handle "m" suffix for millions
+            if cleaned.lower().endswith('m'):
+                return float(cleaned[:-1]) * 1000000
+
+            return float(cleaned)
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_date(self, value: str) -> Optional[int]:
+        """
+        Parse a date string to Unix timestamp.
+
+        Args:
+            value: Date string
+
+        Returns:
+            Unix timestamp or None
+        """
+        if not value:
+            return None
+
+        # Common date formats to try
+        formats = [
+            '%Y-%m-%d',
+            '%m/%d/%Y',
+            '%d/%m/%Y',
+            '%m-%d-%Y',
+            '%d-%m-%Y',
+            '%Y/%m/%d',
+            '%B %d, %Y',
+            '%b %d, %Y',
+        ]
+
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(value.strip(), fmt)
+                return int(dt.timestamp())
+            except ValueError:
+                continue
+
+        return None
+
+    def process_opportunity_import(
+        self,
+        rows: List[Dict[str, str]],
+        pipeline_id: Optional[int] = None,
+        pipeline_stage_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Process CSV rows for opportunity import (create/update).
+
+        Args:
+            rows: Parsed CSV rows
+            pipeline_id: Pipeline ID to use (or default from config)
+            pipeline_stage_id: Initial stage ID for new opportunities
+
+        Returns:
+            Results dictionary with operations to perform
+        """
+        # Get pipeline configuration
+        if not pipeline_id and Config.DEFAULT_PIPELINE_ID:
+            try:
+                pipeline_id = int(Config.DEFAULT_PIPELINE_ID)
+            except (ValueError, TypeError):
+                pass
+
+        # If still no pipeline ID, try to find by name
+        if not pipeline_id and Config.DEFAULT_PIPELINE_NAME:
+            pipeline = self.copper_client.get_pipeline_by_name(Config.DEFAULT_PIPELINE_NAME)
+            if pipeline:
+                pipeline_id = pipeline.get('id')
+                # Get first stage as default
+                stages = self.copper_client.get_pipeline_stages(pipeline_id)
+                if stages and not pipeline_stage_id:
+                    pipeline_stage_id = stages[0].get('id')
+
+        results = {
+            'total_rows': len(rows),
+            'to_create': [],
+            'to_update': [],
+            'errors': [],
+            'pipeline_id': pipeline_id,
+            'pipeline_stage_id': pipeline_stage_id,
+        }
+
+        for idx, row in enumerate(rows, 1):
+            try:
+                # Normalize field names
+                normalized = {}
+                for key, value in row.items():
+                    norm_key = self._normalize_field_name(key)
+                    normalized[norm_key] = value
+
+                # Check if opportunity exists
+                opp_name = normalized.get('name')
+                if not opp_name:
+                    results['errors'].append({
+                        'row': idx,
+                        'error': 'Missing opportunity name',
+                        'data': row
+                    })
+                    continue
+
+                existing = self.copper_client.find_opportunity_by_name(opp_name, pipeline_id)
+
+                # Build opportunity data
+                opp_data = {'name': opp_name}
+
+                # Map fields
+                if normalized.get('monetary_value'):
+                    value = self._parse_monetary_value(normalized['monetary_value'])
+                    if value:
+                        opp_data['monetary_value'] = value
+
+                if normalized.get('close_date'):
+                    close_date = self._parse_date(normalized['close_date'])
+                    if close_date:
+                        opp_data['close_date'] = close_date
+
+                # Company lookup
+                if normalized.get('company_name'):
+                    companies = self.copper_client.search_companies({'name': normalized['company_name']})
+                    if companies:
+                        opp_data['company_id'] = companies[0].get('id')
+                        opp_data['company_name'] = companies[0].get('name')
+
+                # Contact lookup
+                if normalized.get('primary_contact_name'):
+                    contacts = self.copper_client.search_people({'name': normalized['primary_contact_name']})
+                    if contacts:
+                        opp_data['primary_contact_id'] = contacts[0].get('id')
+
+                # Pipeline
+                if pipeline_id:
+                    opp_data['pipeline_id'] = pipeline_id
+
+                if pipeline_stage_id and not existing:
+                    opp_data['pipeline_stage_id'] = pipeline_stage_id
+
+                # Store any extra fields (will be stored as custom fields later if needed)
+                opp_data['_source_row'] = idx
+                opp_data['_raw_data'] = row
+
+                if existing:
+                    results['to_update'].append({
+                        'id': existing['id'],
+                        'name': opp_name,
+                        'data': opp_data,
+                        'existing': existing
+                    })
+                else:
+                    results['to_create'].append({
+                        'name': opp_name,
+                        'data': opp_data
+                    })
+
+            except Exception as e:
+                logger.error(f"Error processing row {idx}: {e}")
+                results['errors'].append({
+                    'row': idx,
+                    'error': str(e),
+                    'data': row
+                })
+
+        return results
+
+    def execute_opportunity_import(
+        self,
+        import_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Execute the opportunity import (create/update operations).
+
+        Args:
+            import_results: Results from process_opportunity_import
+
+        Returns:
+            Execution results
+        """
+        execution = {
+            'created': [],
+            'updated': [],
+            'failed': []
+        }
+
+        # Create new opportunities
+        for item in import_results['to_create']:
+            try:
+                # Remove internal fields
+                data = {k: v for k, v in item['data'].items() if not k.startswith('_')}
+                result = self.copper_client.create_opportunity(data)
+                if result and result.get('id'):
+                    execution['created'].append({
+                        'name': item['name'],
+                        'id': result['id']
+                    })
+                else:
+                    execution['failed'].append({
+                        'name': item['name'],
+                        'error': 'Failed to create'
+                    })
+            except Exception as e:
+                execution['failed'].append({
+                    'name': item['name'],
+                    'error': str(e)
+                })
+
+        # Update existing opportunities
+        for item in import_results['to_update']:
+            try:
+                # Remove internal fields
+                data = {k: v for k, v in item['data'].items() if not k.startswith('_')}
+                # Remove fields that shouldn't be updated
+                data.pop('name', None)  # Don't rename
+                data.pop('pipeline_id', None)  # Don't change pipeline
+
+                if data:  # Only update if there's something to update
+                    result = self.copper_client.update_opportunity(item['id'], data)
+                    if result:
+                        execution['updated'].append({
+                            'name': item['name'],
+                            'id': item['id']
+                        })
+                    else:
+                        execution['failed'].append({
+                            'name': item['name'],
+                            'error': 'Failed to update'
+                        })
+                else:
+                    execution['updated'].append({
+                        'name': item['name'],
+                        'id': item['id'],
+                        'note': 'No changes'
+                    })
+            except Exception as e:
+                execution['failed'].append({
+                    'name': item['name'],
+                    'error': str(e)
+                })
+
+        return execution
+
+    def format_import_preview(self, import_results: Dict[str, Any]) -> str:
+        """
+        Format import preview for approval.
+
+        Args:
+            import_results: Results from process_opportunity_import
+
+        Returns:
+            Formatted string
+        """
+        lines = ["*Opportunity Import Preview*\n"]
+
+        lines.append(f"📊 Total rows: {import_results['total_rows']}")
+        lines.append(f"➕ To create: {len(import_results['to_create'])}")
+        lines.append(f"✏️ To update: {len(import_results['to_update'])}")
+        lines.append(f"❌ Errors: {len(import_results['errors'])}")
+
+        if import_results.get('pipeline_id'):
+            lines.append(f"\n📋 Target pipeline ID: {import_results['pipeline_id']}")
+
+        # Show first few creates
+        if import_results['to_create'][:5]:
+            lines.append("\n*New opportunities:*")
+            for item in import_results['to_create'][:5]:
+                value = item['data'].get('monetary_value', 'N/A')
+                if isinstance(value, (int, float)):
+                    value = f"${value:,.0f}"
+                lines.append(f"  • {item['name']} ({value})")
+            if len(import_results['to_create']) > 5:
+                lines.append(f"  ... and {len(import_results['to_create']) - 5} more")
+
+        # Show first few updates
+        if import_results['to_update'][:5]:
+            lines.append("\n*Updates:*")
+            for item in import_results['to_update'][:5]:
+                lines.append(f"  • {item['name']} (ID: {item['id']})")
+            if len(import_results['to_update']) > 5:
+                lines.append(f"  ... and {len(import_results['to_update']) - 5} more")
+
+        # Show errors
+        if import_results['errors'][:3]:
+            lines.append("\n*Errors:*")
+            for err in import_results['errors'][:3]:
+                lines.append(f"  • Row {err['row']}: {err['error']}")
+
+        return '\n'.join(lines)
+
+    def format_import_results(self, execution: Dict[str, Any]) -> str:
+        """
+        Format import execution results.
+
+        Args:
+            execution: Results from execute_opportunity_import
+
+        Returns:
+            Formatted string
+        """
+        lines = ["*Import Complete*\n"]
+
+        lines.append(f"✅ Created: {len(execution['created'])}")
+        lines.append(f"✏️ Updated: {len(execution['updated'])}")
+        lines.append(f"❌ Failed: {len(execution['failed'])}")
+
+        if execution['failed'][:5]:
+            lines.append("\n*Failures:*")
+            for item in execution['failed'][:5]:
+                lines.append(f"  • {item['name']}: {item['error']}")
+
+        return '\n'.join(lines)

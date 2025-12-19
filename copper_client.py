@@ -586,3 +586,85 @@ class CopperClient:
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
+
+    # ============================================================================
+    # PIPELINES AND STAGES
+    # ============================================================================
+
+    def get_pipelines(self) -> List[Dict]:
+        """
+        Get all pipelines.
+
+        Returns:
+            List of pipelines
+        """
+        result = self._make_request("GET", "pipelines")
+        if isinstance(result, dict) and "error" in result:
+            return []
+        return result if isinstance(result, list) else []
+
+    def get_pipeline_by_name(self, name: str) -> Optional[Dict]:
+        """
+        Get a pipeline by name.
+
+        Args:
+            name: Pipeline name
+
+        Returns:
+            Pipeline data or None
+        """
+        pipelines = self.get_pipelines()
+        for pipeline in pipelines:
+            if pipeline.get('name', '').lower() == name.lower():
+                return pipeline
+        return None
+
+    def get_pipeline_stages(self, pipeline_id: int) -> List[Dict]:
+        """
+        Get stages for a pipeline.
+
+        Args:
+            pipeline_id: Pipeline ID
+
+        Returns:
+            List of pipeline stages
+        """
+        result = self._make_request("GET", f"pipelines/{pipeline_id}/stages")
+        if isinstance(result, dict) and "error" in result:
+            return []
+        return result if isinstance(result, list) else []
+
+    def find_opportunity_by_name(self, name: str, pipeline_id: int = None) -> Optional[Dict]:
+        """
+        Find an opportunity by name, optionally filtering by pipeline.
+
+        Args:
+            name: Opportunity name
+            pipeline_id: Optional pipeline ID to filter by
+
+        Returns:
+            Opportunity data or None
+        """
+        criteria = {'name': name}
+        if pipeline_id:
+            criteria['pipeline_ids'] = [pipeline_id]
+
+        results = self.search_opportunities(criteria)
+        if results:
+            return results[0]
+        return None
+
+    def get_lead(self, lead_id: int) -> Optional[Dict]:
+        """
+        Get a specific lead by ID.
+
+        Args:
+            lead_id: Lead ID
+
+        Returns:
+            Lead data or None
+        """
+        result = self._make_request("GET", f"leads/{lead_id}")
+        if isinstance(result, dict) and "error" in result:
+            return None
+        return result
