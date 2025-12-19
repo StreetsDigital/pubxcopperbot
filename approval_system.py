@@ -33,9 +33,11 @@ class ApprovalSystem:
         self.pending_approvals: Dict[str, Dict] = state.get("pending_approvals", {})
         self.approval_history: List[Dict] = state.get("approval_history", [])
         self.approvers: set = set(state.get("approvers", []))
+        # Slack user ID -> Copper user ID mapping
+        self.user_mapping: Dict[str, int] = state.get("user_mapping", {})
 
         logger.info(f"Loaded approval state: {len(self.pending_approvals)} pending, "
-                    f"{len(self.approvers)} approvers, {len(self.approval_history)} history items")
+                    f"{len(self.approvers)} approvers, {len(self.user_mapping)} user mappings")
 
     def _load_state(self) -> Dict:
         """Load state from persistent storage.
@@ -75,6 +77,7 @@ class ApprovalSystem:
             "pending_approvals": self.pending_approvals,
             "approval_history": self.approval_history,
             "approvers": list(self.approvers),  # Convert set to list for JSON
+            "user_mapping": self.user_mapping,
             "last_updated": datetime.now().isoformat()
         }
 
@@ -159,6 +162,46 @@ class ApprovalSystem:
             List of Slack user IDs
         """
         return list(self.approvers)
+
+    # =========================================================================
+    # User Mapping (Slack ID -> Copper ID)
+    # =========================================================================
+
+    def set_user_mapping(self, slack_user_id: str, copper_user_id: int) -> bool:
+        """
+        Map a Slack user ID to a Copper user ID.
+
+        Args:
+            slack_user_id: Slack user ID
+            copper_user_id: Copper user ID
+
+        Returns:
+            True if saved successfully.
+        """
+        self.user_mapping[slack_user_id] = copper_user_id
+        logger.info(f"Mapped Slack user {slack_user_id} to Copper user {copper_user_id}")
+        return self._save_state()
+
+    def get_copper_user_id(self, slack_user_id: str) -> Optional[int]:
+        """
+        Get the Copper user ID for a Slack user.
+
+        Args:
+            slack_user_id: Slack user ID
+
+        Returns:
+            Copper user ID or None if not mapped.
+        """
+        return self.user_mapping.get(slack_user_id)
+
+    def get_user_mappings(self) -> Dict[str, int]:
+        """
+        Get all user mappings.
+
+        Returns:
+            Dictionary of Slack user ID -> Copper user ID.
+        """
+        return dict(self.user_mapping)
 
     def create_request(
         self,

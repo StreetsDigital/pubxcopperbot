@@ -30,6 +30,9 @@ class Config:
     # Persistent storage directory (defaults to ./data)
     DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 
+    # Default task assignee Copper user ID (for "assign to me" when user mapping not set)
+    DEFAULT_TASK_ASSIGNEE_ID = os.getenv("DEFAULT_TASK_ASSIGNEE_ID")
+
     @classmethod
     def validate(cls):
         """Validate required configuration."""
