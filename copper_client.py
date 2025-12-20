@@ -1,23 +1,45 @@
 """Copper CRM API Client."""
 
-import requests
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Union
+
+import requests
+
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# Type aliases for common patterns
+JsonDict = Dict[str, Any]
+JsonList = List[JsonDict]
+ApiResponse = Union[JsonDict, JsonList]
 
 
 class CopperClient:
     """Client for interacting with Copper CRM API."""
 
-    def __init__(self):
-        """Initialize the Copper API client."""
+    base_url: str
+    headers: Dict[str, str]
+
+    def __init__(self) -> None:
+        """Initialize the Copper API client.
+
+        Raises:
+            ValueError: If required config values are not set.
+        """
+        api_key: Optional[str] = Config.COPPER_API_KEY
+        user_email: Optional[str] = Config.COPPER_USER_EMAIL
+
+        if not api_key or not user_email:
+            raise ValueError(
+                "COPPER_API_KEY and COPPER_USER_EMAIL must be configured"
+            )
+
         self.base_url = Config.COPPER_BASE_URL
         self.headers = {
-            'X-PW-AccessToken': Config.COPPER_API_KEY,
+            'X-PW-AccessToken': api_key,
             'X-PW-Application': 'developer_api',
-            'X-PW-UserEmail': Config.COPPER_USER_EMAIL,
+            'X-PW-UserEmail': user_email,
             'Content-Type': 'application/json'
         }
 
@@ -25,8 +47,8 @@ class CopperClient:
         self,
         method: str,
         endpoint: str,
-        data: Optional[Dict] = None
-    ) -> Dict:
+        data: Optional[JsonDict] = None
+    ) -> ApiResponse:
         """
         Make a request to the Copper API.
 
@@ -36,12 +58,12 @@ class CopperClient:
             data: Request payload
 
         Returns:
-            API response as dictionary
+            API response as dictionary or list, or error dict on failure
         """
-        url = f"{self.base_url}/{endpoint}"
+        url: str = f"{self.base_url}/{endpoint}"
 
         try:
-            response = requests.request(
+            response: requests.Response = requests.request(
                 method=method,
                 url=url,
                 headers=self.headers,
@@ -62,12 +84,15 @@ class CopperClient:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed: {str(e)}")
+            status_code: int = 500
+            if hasattr(e, 'response') and e.response is not None:
+                status_code = getattr(e.response, 'status_code', 500)
             return {
                 "error": f"API request failed: {str(e)}",
-                "status_code": getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
+                "status_code": status_code
             }
 
-    def search_people(self, criteria: Dict) -> List[Dict]:
+    def search_people(self, criteria: JsonDict) -> JsonList:
         """
         Search for people in Copper.
 
@@ -77,12 +102,12 @@ class CopperClient:
         Returns:
             List of matching people
         """
-        result = self._make_request("POST", "people/search", criteria)
+        result: ApiResponse = self._make_request("POST", "people/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def search_companies(self, criteria: Dict) -> List[Dict]:
+    def search_companies(self, criteria: JsonDict) -> JsonList:
         """
         Search for companies in Copper.
 
@@ -92,12 +117,12 @@ class CopperClient:
         Returns:
             List of matching companies
         """
-        result = self._make_request("POST", "companies/search", criteria)
+        result: ApiResponse = self._make_request("POST", "companies/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def search_opportunities(self, criteria: Dict) -> List[Dict]:
+    def search_opportunities(self, criteria: JsonDict) -> JsonList:
         """
         Search for opportunities in Copper.
 
@@ -107,12 +132,12 @@ class CopperClient:
         Returns:
             List of matching opportunities
         """
-        result = self._make_request("POST", "opportunities/search", criteria)
+        result: ApiResponse = self._make_request("POST", "opportunities/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def search_leads(self, criteria: Dict) -> List[Dict]:
+    def search_leads(self, criteria: JsonDict) -> JsonList:
         """
         Search for leads in Copper.
 
@@ -122,12 +147,12 @@ class CopperClient:
         Returns:
             List of matching leads
         """
-        result = self._make_request("POST", "leads/search", criteria)
+        result: ApiResponse = self._make_request("POST", "leads/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def get_person(self, person_id: int) -> Optional[Dict]:
+    def get_person(self, person_id: int) -> Optional[JsonDict]:
         """
         Get a specific person by ID.
 
@@ -137,12 +162,12 @@ class CopperClient:
         Returns:
             Person data or None
         """
-        result = self._make_request("GET", f"people/{person_id}")
+        result: ApiResponse = self._make_request("GET", f"people/{person_id}")
         if isinstance(result, dict) and "error" in result:
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def get_company(self, company_id: int) -> Optional[Dict]:
+    def get_company(self, company_id: int) -> Optional[JsonDict]:
         """
         Get a specific company by ID.
 
@@ -152,12 +177,12 @@ class CopperClient:
         Returns:
             Company data or None
         """
-        result = self._make_request("GET", f"companies/{company_id}")
+        result: ApiResponse = self._make_request("GET", f"companies/{company_id}")
         if isinstance(result, dict) and "error" in result:
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def get_opportunity(self, opportunity_id: int) -> Optional[Dict]:
+    def get_opportunity(self, opportunity_id: int) -> Optional[JsonDict]:
         """
         Get a specific opportunity by ID.
 
@@ -167,12 +192,12 @@ class CopperClient:
         Returns:
             Opportunity data or None
         """
-        result = self._make_request("GET", f"opportunities/{opportunity_id}")
+        result: ApiResponse = self._make_request("GET", f"opportunities/{opportunity_id}")
         if isinstance(result, dict) and "error" in result:
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def update_person(self, person_id: int, updates: Dict) -> Optional[Dict]:
+    def update_person(self, person_id: int, updates: JsonDict) -> Optional[JsonDict]:
         """
         Update a person/contact in Copper.
 
@@ -183,13 +208,13 @@ class CopperClient:
         Returns:
             Updated person data or None
         """
-        result = self._make_request("PUT", f"people/{person_id}", updates)
+        result: ApiResponse = self._make_request("PUT", f"people/{person_id}", updates)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to update person {person_id}: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def update_company(self, company_id: int, updates: Dict) -> Optional[Dict]:
+    def update_company(self, company_id: int, updates: JsonDict) -> Optional[JsonDict]:
         """
         Update a company in Copper.
 
@@ -200,13 +225,15 @@ class CopperClient:
         Returns:
             Updated company data or None
         """
-        result = self._make_request("PUT", f"companies/{company_id}", updates)
+        result: ApiResponse = self._make_request("PUT", f"companies/{company_id}", updates)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to update company {company_id}: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def update_opportunity(self, opportunity_id: int, updates: Dict) -> Optional[Dict]:
+    def update_opportunity(
+        self, opportunity_id: int, updates: JsonDict
+    ) -> Optional[JsonDict]:
         """
         Update an opportunity in Copper.
 
@@ -217,13 +244,17 @@ class CopperClient:
         Returns:
             Updated opportunity data or None
         """
-        result = self._make_request("PUT", f"opportunities/{opportunity_id}", updates)
+        result: ApiResponse = self._make_request(
+            "PUT", f"opportunities/{opportunity_id}", updates
+        )
         if isinstance(result, dict) and "error" in result:
-            logger.error(f"Failed to update opportunity {opportunity_id}: {result.get('error')}")
+            logger.error(
+                f"Failed to update opportunity {opportunity_id}: {result.get('error')}"
+            )
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def update_lead(self, lead_id: int, updates: Dict) -> Optional[Dict]:
+    def update_lead(self, lead_id: int, updates: JsonDict) -> Optional[JsonDict]:
         """
         Update a lead in Copper.
 
@@ -234,17 +265,17 @@ class CopperClient:
         Returns:
             Updated lead data or None
         """
-        result = self._make_request("PUT", f"leads/{lead_id}", updates)
+        result: ApiResponse = self._make_request("PUT", f"leads/{lead_id}", updates)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to update lead {lead_id}: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
     # ============================================================================
     # CREATE METHODS
     # ============================================================================
 
-    def create_person(self, data: Dict) -> Optional[Dict]:
+    def create_person(self, data: JsonDict) -> Optional[JsonDict]:
         """
         Create a new person/contact in Copper.
 
@@ -256,13 +287,13 @@ class CopperClient:
         Returns:
             Created person data or None
         """
-        result = self._make_request("POST", "people", data)
+        result: ApiResponse = self._make_request("POST", "people", data)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to create person: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def create_company(self, data: Dict) -> Optional[Dict]:
+    def create_company(self, data: JsonDict) -> Optional[JsonDict]:
         """
         Create a new company in Copper.
 
@@ -274,13 +305,13 @@ class CopperClient:
         Returns:
             Created company data or None
         """
-        result = self._make_request("POST", "companies", data)
+        result: ApiResponse = self._make_request("POST", "companies", data)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to create company: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def create_opportunity(self, data: Dict) -> Optional[Dict]:
+    def create_opportunity(self, data: JsonDict) -> Optional[JsonDict]:
         """
         Create a new opportunity in Copper.
 
@@ -292,13 +323,13 @@ class CopperClient:
         Returns:
             Created opportunity data or None
         """
-        result = self._make_request("POST", "opportunities", data)
+        result: ApiResponse = self._make_request("POST", "opportunities", data)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to create opportunity: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def create_lead(self, data: Dict) -> Optional[Dict]:
+    def create_lead(self, data: JsonDict) -> Optional[JsonDict]:
         """
         Create a new lead in Copper.
 
@@ -310,13 +341,13 @@ class CopperClient:
         Returns:
             Created lead data or None
         """
-        result = self._make_request("POST", "leads", data)
+        result: ApiResponse = self._make_request("POST", "leads", data)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to create lead: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def create_task(self, data: Dict) -> Optional[Dict]:
+    def create_task(self, data: JsonDict) -> Optional[JsonDict]:
         """
         Create a new task in Copper.
 
@@ -328,13 +359,13 @@ class CopperClient:
         Returns:
             Created task data or None
         """
-        result = self._make_request("POST", "tasks", data)
+        result: ApiResponse = self._make_request("POST", "tasks", data)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to create task: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def create_project(self, data: Dict) -> Optional[Dict]:
+    def create_project(self, data: JsonDict) -> Optional[JsonDict]:
         """
         Create a new project in Copper.
 
@@ -346,11 +377,11 @@ class CopperClient:
         Returns:
             Created project data or None
         """
-        result = self._make_request("POST", "projects", data)
+        result: ApiResponse = self._make_request("POST", "projects", data)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to create project: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
     # ============================================================================
     # DELETE METHODS
@@ -366,7 +397,7 @@ class CopperClient:
         Returns:
             True if successful, False otherwise
         """
-        result = self._make_request("DELETE", f"people/{person_id}")
+        result: ApiResponse = self._make_request("DELETE", f"people/{person_id}")
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to delete person {person_id}: {result.get('error')}")
             return False
@@ -382,7 +413,7 @@ class CopperClient:
         Returns:
             True if successful, False otherwise
         """
-        result = self._make_request("DELETE", f"companies/{company_id}")
+        result: ApiResponse = self._make_request("DELETE", f"companies/{company_id}")
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to delete company {company_id}: {result.get('error')}")
             return False
@@ -398,9 +429,13 @@ class CopperClient:
         Returns:
             True if successful, False otherwise
         """
-        result = self._make_request("DELETE", f"opportunities/{opportunity_id}")
+        result: ApiResponse = self._make_request(
+            "DELETE", f"opportunities/{opportunity_id}"
+        )
         if isinstance(result, dict) and "error" in result:
-            logger.error(f"Failed to delete opportunity {opportunity_id}: {result.get('error')}")
+            logger.error(
+                f"Failed to delete opportunity {opportunity_id}: {result.get('error')}"
+            )
             return False
         return True
 
@@ -414,7 +449,7 @@ class CopperClient:
         Returns:
             True if successful, False otherwise
         """
-        result = self._make_request("DELETE", f"leads/{lead_id}")
+        result: ApiResponse = self._make_request("DELETE", f"leads/{lead_id}")
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to delete lead {lead_id}: {result.get('error')}")
             return False
@@ -430,7 +465,7 @@ class CopperClient:
         Returns:
             True if successful, False otherwise
         """
-        result = self._make_request("DELETE", f"tasks/{task_id}")
+        result: ApiResponse = self._make_request("DELETE", f"tasks/{task_id}")
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to delete task {task_id}: {result.get('error')}")
             return False
@@ -446,7 +481,7 @@ class CopperClient:
         Returns:
             True if successful, False otherwise
         """
-        result = self._make_request("DELETE", f"projects/{project_id}")
+        result: ApiResponse = self._make_request("DELETE", f"projects/{project_id}")
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to delete project {project_id}: {result.get('error')}")
             return False
@@ -456,7 +491,7 @@ class CopperClient:
     # TASKS, PROJECTS, AND ACTIVITIES
     # ============================================================================
 
-    def search_tasks(self, criteria: Dict) -> List[Dict]:
+    def search_tasks(self, criteria: JsonDict) -> JsonList:
         """
         Search for tasks in Copper.
 
@@ -466,12 +501,12 @@ class CopperClient:
         Returns:
             List of matching tasks
         """
-        result = self._make_request("POST", "tasks/search", criteria)
+        result: ApiResponse = self._make_request("POST", "tasks/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def get_task(self, task_id: int) -> Optional[Dict]:
+    def get_task(self, task_id: int) -> Optional[JsonDict]:
         """
         Get a specific task by ID.
 
@@ -481,12 +516,12 @@ class CopperClient:
         Returns:
             Task data or None
         """
-        result = self._make_request("GET", f"tasks/{task_id}")
+        result: ApiResponse = self._make_request("GET", f"tasks/{task_id}")
         if isinstance(result, dict) and "error" in result:
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def update_task(self, task_id: int, updates: Dict) -> Optional[Dict]:
+    def update_task(self, task_id: int, updates: JsonDict) -> Optional[JsonDict]:
         """
         Update a task in Copper.
 
@@ -497,13 +532,13 @@ class CopperClient:
         Returns:
             Updated task data or None
         """
-        result = self._make_request("PUT", f"tasks/{task_id}", updates)
+        result: ApiResponse = self._make_request("PUT", f"tasks/{task_id}", updates)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to update task {task_id}: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def search_projects(self, criteria: Dict) -> List[Dict]:
+    def search_projects(self, criteria: JsonDict) -> JsonList:
         """
         Search for projects in Copper.
 
@@ -513,12 +548,12 @@ class CopperClient:
         Returns:
             List of matching projects
         """
-        result = self._make_request("POST", "projects/search", criteria)
+        result: ApiResponse = self._make_request("POST", "projects/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def get_project(self, project_id: int) -> Optional[Dict]:
+    def get_project(self, project_id: int) -> Optional[JsonDict]:
         """
         Get a specific project by ID.
 
@@ -528,12 +563,12 @@ class CopperClient:
         Returns:
             Project data or None
         """
-        result = self._make_request("GET", f"projects/{project_id}")
+        result: ApiResponse = self._make_request("GET", f"projects/{project_id}")
         if isinstance(result, dict) and "error" in result:
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def update_project(self, project_id: int, updates: Dict) -> Optional[Dict]:
+    def update_project(self, project_id: int, updates: JsonDict) -> Optional[JsonDict]:
         """
         Update a project in Copper.
 
@@ -544,13 +579,13 @@ class CopperClient:
         Returns:
             Updated project data or None
         """
-        result = self._make_request("PUT", f"projects/{project_id}", updates)
+        result: ApiResponse = self._make_request("PUT", f"projects/{project_id}", updates)
         if isinstance(result, dict) and "error" in result:
             logger.error(f"Failed to update project {project_id}: {result.get('error')}")
             return None
-        return result
+        return result if isinstance(result, dict) else None
 
-    def search_activities(self, criteria: Dict) -> List[Dict]:
+    def search_activities(self, criteria: JsonDict) -> JsonList:
         """
         Search for activities in Copper.
 
@@ -560,12 +595,17 @@ class CopperClient:
         Returns:
             List of matching activities
         """
-        result = self._make_request("POST", "activities/search", criteria)
+        result: ApiResponse = self._make_request("POST", "activities/search", criteria)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def get_related_items(self, entity_type: str, entity_id: int, related_type: Optional[str] = None) -> List[Dict]:
+    def get_related_items(
+        self,
+        entity_type: str,
+        entity_id: int,
+        related_type: Optional[str] = None
+    ) -> JsonList:
         """
         Get related items for an entity.
 
@@ -577,12 +617,13 @@ class CopperClient:
         Returns:
             List of related items
         """
+        endpoint: str
         if related_type:
             endpoint = f"{entity_type}/{entity_id}/related/{related_type}"
         else:
             endpoint = f"{entity_type}/{entity_id}/related"
 
-        result = self._make_request("GET", endpoint)
+        result: ApiResponse = self._make_request("GET", endpoint)
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
@@ -591,19 +632,19 @@ class CopperClient:
     # PIPELINES AND STAGES
     # ============================================================================
 
-    def get_pipelines(self) -> List[Dict]:
+    def get_pipelines(self) -> JsonList:
         """
         Get all pipelines.
 
         Returns:
             List of pipelines
         """
-        result = self._make_request("GET", "pipelines")
+        result: ApiResponse = self._make_request("GET", "pipelines")
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def get_pipeline_by_name(self, name: str) -> Optional[Dict]:
+    def get_pipeline_by_name(self, name: str) -> Optional[JsonDict]:
         """
         Get a pipeline by name.
 
@@ -613,13 +654,13 @@ class CopperClient:
         Returns:
             Pipeline data or None
         """
-        pipelines = self.get_pipelines()
+        pipelines: JsonList = self.get_pipelines()
         for pipeline in pipelines:
             if pipeline.get('name', '').lower() == name.lower():
                 return pipeline
         return None
 
-    def get_pipeline_stages(self, pipeline_id: int) -> List[Dict]:
+    def get_pipeline_stages(self, pipeline_id: int) -> JsonList:
         """
         Get stages for a pipeline.
 
@@ -629,12 +670,18 @@ class CopperClient:
         Returns:
             List of pipeline stages
         """
-        result = self._make_request("GET", f"pipelines/{pipeline_id}/stages")
+        result: ApiResponse = self._make_request(
+            "GET", f"pipelines/{pipeline_id}/stages"
+        )
         if isinstance(result, dict) and "error" in result:
             return []
         return result if isinstance(result, list) else []
 
-    def find_opportunity_by_name(self, name: str, pipeline_id: int = None) -> Optional[Dict]:
+    def find_opportunity_by_name(
+        self,
+        name: str,
+        pipeline_id: Optional[int] = None
+    ) -> Optional[JsonDict]:
         """
         Find an opportunity by name, optionally filtering by pipeline.
 
@@ -645,16 +692,16 @@ class CopperClient:
         Returns:
             Opportunity data or None
         """
-        criteria = {'name': name}
+        criteria: JsonDict = {'name': name}
         if pipeline_id:
             criteria['pipeline_ids'] = [pipeline_id]
 
-        results = self.search_opportunities(criteria)
+        results: JsonList = self.search_opportunities(criteria)
         if results:
             return results[0]
         return None
 
-    def get_lead(self, lead_id: int) -> Optional[Dict]:
+    def get_lead(self, lead_id: int) -> Optional[JsonDict]:
         """
         Get a specific lead by ID.
 
@@ -664,7 +711,7 @@ class CopperClient:
         Returns:
             Lead data or None
         """
-        result = self._make_request("GET", f"leads/{lead_id}")
+        result: ApiResponse = self._make_request("GET", f"leads/{lead_id}")
         if isinstance(result, dict) and "error" in result:
             return None
-        return result
+        return result if isinstance(result, dict) else None

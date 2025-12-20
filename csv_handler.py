@@ -3,22 +3,36 @@
 import csv
 import io
 import logging
-from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
 import requests
+
 from config import Config
+
+if TYPE_CHECKING:
+    from copper_client import CopperClient
+
+# Type aliases for common patterns
+JsonDict = Dict[str, Any]
+CsvRow = Dict[str, str]
+EnrichedRow = Dict[str, str]
+ProcessingResults = Dict[str, Any]
+ImportResults = Dict[str, Any]
+ExecutionResults = Dict[str, Any]
+SearchCriteria = Dict[str, Any]
 
 # Try to import openpyxl for Excel support
 try:
     import openpyxl
-    EXCEL_SUPPORT = True
+    EXCEL_SUPPORT: bool = True
 except ImportError:
     EXCEL_SUPPORT = False
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 # Standard field mappings for opportunity imports
-OPPORTUNITY_FIELD_MAPPINGS = {
+OPPORTUNITY_FIELD_MAPPINGS: Dict[str, List[str]] = {
     # Name fields
     'name': ['name', 'opportunity_name', 'opportunity', 'deal', 'deal_name', 'title'],
     # Company fields
@@ -39,7 +53,9 @@ OPPORTUNITY_FIELD_MAPPINGS = {
 class CSVHandler:
     """Handle CSV file uploads and process batch queries."""
 
-    def __init__(self, copper_client):
+    copper_client: "CopperClient"
+
+    def __init__(self, copper_client: "CopperClient") -> None:
         """
         Initialize CSV handler.
 
@@ -60,15 +76,15 @@ class CSVHandler:
             File content as bytes
         """
         try:
-            headers = {'Authorization': f'Bearer {token}'}
-            response = requests.get(url, headers=headers, timeout=30)
+            headers: Dict[str, str] = {'Authorization': f'Bearer {token}'}
+            response: requests.Response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             return response.content
-        except Exception as e:
+        except requests.RequestException as e:
             logger.error(f"Failed to download file: {str(e)}")
             raise
 
-    def parse_csv(self, content: bytes) -> List[Dict[str, str]]:
+    def parse_csv(self, content: bytes) -> List[CsvRow]:
         """
         Parse CSV content.
 
@@ -80,20 +96,20 @@ class CSVHandler:
         """
         try:
             # Decode content
-            text = content.decode('utf-8')
+            text: str = content.decode('utf-8')
 
             # Parse CSV
-            reader = csv.DictReader(io.StringIO(text))
-            rows = list(reader)
+            reader: csv.DictReader[str] = csv.DictReader(io.StringIO(text))
+            rows: List[CsvRow] = list(reader)
 
             logger.info(f"Parsed {len(rows)} rows from CSV")
             return rows
 
-        except Exception as e:
+        except (UnicodeDecodeError, csv.Error) as e:
             logger.error(f"Failed to parse CSV: {str(e)}")
             raise
 
-    def parse_excel(self, content: bytes) -> List[Dict[str, str]]:
+    def parse_excel(self, content: bytes) -> List[CsvRow]:
         """
         Parse Excel (.xlsx) content.
 
@@ -104,41 +120,47 @@ class CSVHandler:
             List of dictionaries representing rows
         """
         if not EXCEL_SUPPORT:
-            raise ImportError("openpyxl is required for Excel support. Install with: pip install openpyxl")
+            raise ImportError(
+                "openpyxl is required for Excel support. "
+                "Install with: pip install openpyxl"
+            )
 
         try:
             # Load workbook from bytes
             workbook = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
             sheet = workbook.active
 
-            rows = []
-            headers = []
+            rows: List[CsvRow] = []
+            headers: List[str] = []
 
             for row_idx, row in enumerate(sheet.iter_rows(values_only=True)):
                 if row_idx == 0:
                     # First row is headers
-                    headers = [str(cell).strip() if cell else f'column_{i}' for i, cell in enumerate(row)]
+                    headers = [
+                        str(cell).strip() if cell else f'column_{i}'
+                        for i, cell in enumerate(row)
+                    ]
                 else:
                     # Skip empty rows
                     if all(cell is None or str(cell).strip() == '' for cell in row):
                         continue
 
-                    row_dict = {}
+                    row_dict: CsvRow = {}
                     for i, cell in enumerate(row):
                         if i < len(headers):
                             # Convert cell value to string
-                            value = str(cell).strip() if cell is not None else ''
+                            value: str = str(cell).strip() if cell is not None else ''
                             row_dict[headers[i]] = value
                     rows.append(row_dict)
 
             logger.info(f"Parsed {len(rows)} rows from Excel")
             return rows
 
-        except Exception as e:
+        except (OSError, KeyError, ValueError) as e:
             logger.error(f"Failed to parse Excel: {str(e)}")
             raise
 
-    def parse_file(self, content: bytes, filename: str) -> List[Dict[str, str]]:
+    def parse_file(self, content: bytes, filename: str) -> List[CsvRow]:
         """
         Parse a file based on its extension.
 
@@ -149,7 +171,7 @@ class CSVHandler:
         Returns:
             List of dictionaries representing rows
         """
-        filename_lower = filename.lower()
+        filename_lower: str = filename.lower()
 
         if filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls'):
             return self.parse_excel(content)
@@ -159,7 +181,7 @@ class CSVHandler:
             # Try CSV as default
             return self.parse_csv(content)
 
-    def process_csv_queries(self, rows: List[Dict[str, str]]) -> Dict[str, Any]:
+    def process_csv_queries(self, rows: List[CsvRow]) -> ProcessingResults:
         """
         Process CSV rows and check existence in Copper CRM.
 
@@ -174,7 +196,7 @@ class CSVHandler:
         Returns:
             Results dictionary with enriched rows
         """
-        results = {
+        results: ProcessingResults = {
             'total_queries': len(rows),
             'successful': 0,
             'failed': 0,
@@ -184,24 +206,24 @@ class CSVHandler:
         for idx, row in enumerate(rows, 1):
             try:
                 # Create enriched row with original data
-                enriched_row = dict(row)
+                enriched_row: EnrichedRow = dict(row)
 
                 # Check for contact/person
-                contact_exists = self._check_contact_exists(row)
+                contact_exists: bool = self._check_contact_exists(row)
                 enriched_row['Contact is in CRM'] = 'Yes' if contact_exists else 'No'
 
                 # Check for company
-                company_exists = self._check_company_exists(row)
+                company_exists: bool = self._check_company_exists(row)
                 enriched_row['Company is in CRM'] = 'Yes' if company_exists else 'No'
 
                 # Check for opportunity
-                opportunity_exists = self._check_opportunity_exists(row)
+                opportunity_exists: bool = self._check_opportunity_exists(row)
                 enriched_row['Opportunity exists'] = 'Yes' if opportunity_exists else 'No'
 
                 results['enriched_rows'].append(enriched_row)
                 results['successful'] += 1
 
-            except Exception as e:
+            except (KeyError, AttributeError) as e:
                 logger.error(f"Failed to process row {idx}: {str(e)}")
                 results['failed'] += 1
                 enriched_row = dict(row)
@@ -212,7 +234,7 @@ class CSVHandler:
 
         return results
 
-    def _check_contact_exists(self, row: Dict[str, str]) -> bool:
+    def _check_contact_exists(self, row: CsvRow) -> bool:
         """
         Check if a contact/person exists in Copper.
 
@@ -222,7 +244,7 @@ class CSVHandler:
         Returns:
             True if contact exists, False otherwise
         """
-        criteria = {}
+        criteria: SearchCriteria = {}
 
         # Try to find by email (most accurate)
         if 'email' in row and row['email']:
@@ -236,10 +258,10 @@ class CSVHandler:
         else:
             return False
 
-        results = self.copper_client.search_people(criteria)
+        results: List[JsonDict] = self.copper_client.search_people(criteria)
         return len(results) > 0
 
-    def _check_company_exists(self, row: Dict[str, str]) -> bool:
+    def _check_company_exists(self, row: CsvRow) -> bool:
         """
         Check if a company exists in Copper.
 
@@ -249,7 +271,7 @@ class CSVHandler:
         Returns:
             True if company exists, False otherwise
         """
-        criteria = {}
+        criteria: SearchCriteria = {}
 
         # Try to find by company name
         if 'company' in row and row['company']:
@@ -259,10 +281,10 @@ class CSVHandler:
         else:
             return False
 
-        results = self.copper_client.search_companies(criteria)
+        results: List[JsonDict] = self.copper_client.search_companies(criteria)
         return len(results) > 0
 
-    def _check_opportunity_exists(self, row: Dict[str, str]) -> bool:
+    def _check_opportunity_exists(self, row: CsvRow) -> bool:
         """
         Check if an opportunity exists in Copper.
 
@@ -272,7 +294,7 @@ class CSVHandler:
         Returns:
             True if opportunity exists, False otherwise
         """
-        criteria = {}
+        criteria: SearchCriteria = {}
 
         # Try to find by opportunity name
         if 'opportunity' in row and row['opportunity']:
@@ -284,10 +306,10 @@ class CSVHandler:
         else:
             return False
 
-        results = self.copper_client.search_opportunities(criteria)
+        results: List[JsonDict] = self.copper_client.search_opportunities(criteria)
         return len(results) > 0
 
-    def generate_enriched_csv(self, enriched_rows: List[Dict[str, str]]) -> bytes:
+    def generate_enriched_csv(self, enriched_rows: List[EnrichedRow]) -> bytes:
         """
         Generate a CSV file with enriched data.
 
@@ -300,19 +322,21 @@ class CSVHandler:
         if not enriched_rows:
             return b""
 
-        output = io.StringIO()
+        output: io.StringIO = io.StringIO()
 
         # Get all field names (original + new columns)
-        fieldnames = list(enriched_rows[0].keys())
+        fieldnames: List[str] = list(enriched_rows[0].keys())
 
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer: csv.DictWriter[str] = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(enriched_rows)
 
         # Convert to bytes
         return output.getvalue().encode('utf-8')
 
-    def _build_criteria_from_row(self, row: Dict[str, str], entity_type: str) -> Dict:
+    def _build_criteria_from_row(
+        self, row: CsvRow, entity_type: str
+    ) -> SearchCriteria:
         """
         Build Copper search criteria from CSV row.
 
@@ -323,7 +347,7 @@ class CSVHandler:
         Returns:
             Search criteria dictionary
         """
-        criteria = {}
+        criteria: SearchCriteria = {}
 
         # Common fields
         if 'name' in row and row['name']:
@@ -361,7 +385,9 @@ class CSVHandler:
 
         return criteria
 
-    def _query_copper(self, entity_type: str, criteria: Dict) -> List[Dict]:
+    def _query_copper(
+        self, entity_type: str, criteria: SearchCriteria
+    ) -> List[JsonDict]:
         """
         Query Copper API based on entity type.
 
@@ -383,7 +409,7 @@ class CSVHandler:
         else:
             return []
 
-    def format_csv_results(self, results: Dict[str, Any]) -> str:
+    def format_csv_results(self, results: ProcessingResults) -> str:
         """
         Format CSV query results for Slack.
 
@@ -393,21 +419,30 @@ class CSVHandler:
         Returns:
             Formatted string
         """
-        summary = f"*CSV Processing Results*\n\n"
+        summary: str = "*CSV Processing Results*\n\n"
         summary += f"📊 Total rows: {results['total_queries']}\n"
         summary += f"✅ Successful: {results['successful']}\n"
         summary += f"❌ Failed: {results['failed']}\n\n"
 
         # Count totals
-        enriched_rows = results['enriched_rows']
-        contacts_found = sum(1 for row in enriched_rows if row.get('Contact is in CRM') == 'Yes')
-        companies_found = sum(1 for row in enriched_rows if row.get('Company is in CRM') == 'Yes')
-        opportunities_found = sum(1 for row in enriched_rows if row.get('Opportunity exists') == 'Yes')
+        enriched_rows: List[EnrichedRow] = results['enriched_rows']
+        contacts_found: int = sum(
+            1 for row in enriched_rows if row.get('Contact is in CRM') == 'Yes'
+        )
+        companies_found: int = sum(
+            1 for row in enriched_rows if row.get('Company is in CRM') == 'Yes'
+        )
+        opportunities_found: int = sum(
+            1 for row in enriched_rows if row.get('Opportunity exists') == 'Yes'
+        )
 
         summary += f"👤 Contacts in CRM: {contacts_found}/{len(enriched_rows)}\n"
         summary += f"🏢 Companies in CRM: {companies_found}/{len(enriched_rows)}\n"
         summary += f"💼 Opportunities exist: {opportunities_found}/{len(enriched_rows)}\n\n"
-        summary += "📥 *Download the enriched CSV file below to see all results with new columns added.*"
+        summary += (
+            "📥 *Download the enriched CSV file below to see all results "
+            "with new columns added.*"
+        )
 
         return summary
 
@@ -415,7 +450,7 @@ class CSVHandler:
     # Opportunity Import (Create/Update from CSV/Excel)
     # =========================================================================
 
-    def detect_import_mode(self, rows: List[Dict[str, str]]) -> str:
+    def detect_import_mode(self, rows: List[CsvRow]) -> str:
         """
         Detect if the CSV is for lookup or import based on columns.
 
@@ -429,16 +464,16 @@ class CSVHandler:
             return 'lookup'
 
         # Get column names from first row
-        columns = set(k.lower() for k in rows[0].keys())
+        columns: set[str] = set(k.lower() for k in rows[0].keys())
 
         # Check for import indicators
-        import_indicators = {
+        import_indicators: set[str] = {
             'value', 'amount', 'revenue', 'monetary_value',
             'close_date', 'expected_close', 'stage', 'pipeline_stage',
             'monthly_impressions', 'impressions'
         }
 
-        matches = columns.intersection(import_indicators)
+        matches: set[str] = columns.intersection(import_indicators)
         if len(matches) >= 1:
             return 'import'
 
@@ -454,7 +489,7 @@ class CSVHandler:
         Returns:
             Canonical field name
         """
-        field_lower = field.lower().strip()
+        field_lower: str = field.lower().strip()
 
         for canonical, aliases in OPPORTUNITY_FIELD_MAPPINGS.items():
             if field_lower in aliases:
@@ -477,7 +512,9 @@ class CSVHandler:
 
         try:
             # Remove common currency symbols and whitespace
-            cleaned = value.strip().replace('$', '').replace(',', '').replace(' ', '')
+            cleaned: str = (
+                value.strip().replace('$', '').replace(',', '').replace(' ', '')
+            )
 
             # Handle "k" suffix for thousands
             if cleaned.lower().endswith('k'):
@@ -505,7 +542,7 @@ class CSVHandler:
             return None
 
         # Common date formats to try
-        formats = [
+        formats: List[str] = [
             '%Y-%m-%d',
             '%m/%d/%Y',
             '%d/%m/%Y',
@@ -518,7 +555,7 @@ class CSVHandler:
 
         for fmt in formats:
             try:
-                dt = datetime.strptime(value.strip(), fmt)
+                dt: datetime = datetime.strptime(value.strip(), fmt)
                 return int(dt.timestamp())
             except ValueError:
                 continue
@@ -527,10 +564,10 @@ class CSVHandler:
 
     def process_opportunity_import(
         self,
-        rows: List[Dict[str, str]],
+        rows: List[CsvRow],
         pipeline_id: Optional[int] = None,
         pipeline_stage_id: Optional[int] = None
-    ) -> Dict[str, Any]:
+    ) -> ImportResults:
         """
         Process CSV rows for opportunity import (create/update).
 
@@ -551,15 +588,21 @@ class CSVHandler:
 
         # If still no pipeline ID, try to find by name
         if not pipeline_id and Config.DEFAULT_PIPELINE_NAME:
-            pipeline = self.copper_client.get_pipeline_by_name(Config.DEFAULT_PIPELINE_NAME)
+            pipeline: Optional[JsonDict] = self.copper_client.get_pipeline_by_name(
+                Config.DEFAULT_PIPELINE_NAME
+            )
             if pipeline:
-                pipeline_id = pipeline.get('id')
-                # Get first stage as default
-                stages = self.copper_client.get_pipeline_stages(pipeline_id)
-                if stages and not pipeline_stage_id:
-                    pipeline_stage_id = stages[0].get('id')
+                found_id: Optional[int] = pipeline.get('id')
+                if found_id is not None:
+                    pipeline_id = found_id
+                    # Get first stage as default
+                    stages: List[JsonDict] = self.copper_client.get_pipeline_stages(
+                        pipeline_id
+                    )
+                    if stages and not pipeline_stage_id:
+                        pipeline_stage_id = stages[0].get('id')
 
-        results = {
+        results: ImportResults = {
             'total_rows': len(rows),
             'to_create': [],
             'to_update': [],
@@ -571,13 +614,13 @@ class CSVHandler:
         for idx, row in enumerate(rows, 1):
             try:
                 # Normalize field names
-                normalized = {}
-                for key, value in row.items():
-                    norm_key = self._normalize_field_name(key)
-                    normalized[norm_key] = value
+                normalized: Dict[str, str] = {}
+                for key, cell_value in row.items():
+                    norm_key: str = self._normalize_field_name(key)
+                    normalized[norm_key] = cell_value
 
                 # Check if opportunity exists
-                opp_name = normalized.get('name')
+                opp_name: Optional[str] = normalized.get('name')
                 if not opp_name:
                     results['errors'].append({
                         'row': idx,
@@ -586,32 +629,42 @@ class CSVHandler:
                     })
                     continue
 
-                existing = self.copper_client.find_opportunity_by_name(opp_name, pipeline_id)
+                existing: Optional[JsonDict] = (
+                    self.copper_client.find_opportunity_by_name(opp_name, pipeline_id)
+                )
 
                 # Build opportunity data
-                opp_data = {'name': opp_name}
+                opp_data: JsonDict = {'name': opp_name}
 
                 # Map fields
                 if normalized.get('monetary_value'):
-                    value = self._parse_monetary_value(normalized['monetary_value'])
-                    if value:
-                        opp_data['monetary_value'] = value
+                    monetary_val: Optional[float] = self._parse_monetary_value(
+                        normalized['monetary_value']
+                    )
+                    if monetary_val:
+                        opp_data['monetary_value'] = monetary_val
 
                 if normalized.get('close_date'):
-                    close_date = self._parse_date(normalized['close_date'])
+                    close_date: Optional[int] = self._parse_date(
+                        normalized['close_date']
+                    )
                     if close_date:
                         opp_data['close_date'] = close_date
 
                 # Company lookup
                 if normalized.get('company_name'):
-                    companies = self.copper_client.search_companies({'name': normalized['company_name']})
+                    companies: List[JsonDict] = self.copper_client.search_companies(
+                        {'name': normalized['company_name']}
+                    )
                     if companies:
                         opp_data['company_id'] = companies[0].get('id')
                         opp_data['company_name'] = companies[0].get('name')
 
                 # Contact lookup
                 if normalized.get('primary_contact_name'):
-                    contacts = self.copper_client.search_people({'name': normalized['primary_contact_name']})
+                    contacts: List[JsonDict] = self.copper_client.search_people(
+                        {'name': normalized['primary_contact_name']}
+                    )
                     if contacts:
                         opp_data['primary_contact_id'] = contacts[0].get('id')
 
@@ -622,7 +675,7 @@ class CSVHandler:
                 if pipeline_stage_id and not existing:
                     opp_data['pipeline_stage_id'] = pipeline_stage_id
 
-                # Store any extra fields (will be stored as custom fields later if needed)
+                # Store any extra fields (will be stored as custom fields later)
                 opp_data['_source_row'] = idx
                 opp_data['_raw_data'] = row
 
@@ -639,7 +692,7 @@ class CSVHandler:
                         'data': opp_data
                     })
 
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError) as e:
                 logger.error(f"Error processing row {idx}: {e}")
                 results['errors'].append({
                     'row': idx,
@@ -651,8 +704,8 @@ class CSVHandler:
 
     def execute_opportunity_import(
         self,
-        import_results: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        import_results: ImportResults
+    ) -> ExecutionResults:
         """
         Execute the opportunity import (create/update operations).
 
@@ -662,7 +715,7 @@ class CSVHandler:
         Returns:
             Execution results
         """
-        execution = {
+        execution: ExecutionResults = {
             'created': [],
             'updated': [],
             'failed': []
@@ -672,8 +725,12 @@ class CSVHandler:
         for item in import_results['to_create']:
             try:
                 # Remove internal fields
-                data = {k: v for k, v in item['data'].items() if not k.startswith('_')}
-                result = self.copper_client.create_opportunity(data)
+                data: JsonDict = {
+                    k: v for k, v in item['data'].items() if not k.startswith('_')
+                }
+                result: Optional[JsonDict] = self.copper_client.create_opportunity(
+                    data
+                )
                 if result and result.get('id'):
                     execution['created'].append({
                         'name': item['name'],
@@ -684,7 +741,7 @@ class CSVHandler:
                         'name': item['name'],
                         'error': 'Failed to create'
                     })
-            except Exception as e:
+            except (KeyError, AttributeError, requests.RequestException) as e:
                 execution['failed'].append({
                     'name': item['name'],
                     'error': str(e)
@@ -694,7 +751,9 @@ class CSVHandler:
         for item in import_results['to_update']:
             try:
                 # Remove internal fields
-                data = {k: v for k, v in item['data'].items() if not k.startswith('_')}
+                data = {
+                    k: v for k, v in item['data'].items() if not k.startswith('_')
+                }
                 # Remove fields that shouldn't be updated
                 data.pop('name', None)  # Don't rename
                 data.pop('pipeline_id', None)  # Don't change pipeline
@@ -717,7 +776,7 @@ class CSVHandler:
                         'id': item['id'],
                         'note': 'No changes'
                     })
-            except Exception as e:
+            except (KeyError, AttributeError, requests.RequestException) as e:
                 execution['failed'].append({
                     'name': item['name'],
                     'error': str(e)
@@ -725,7 +784,7 @@ class CSVHandler:
 
         return execution
 
-    def format_import_preview(self, import_results: Dict[str, Any]) -> str:
+    def format_import_preview(self, import_results: ImportResults) -> str:
         """
         Format import preview for approval.
 
@@ -735,7 +794,7 @@ class CSVHandler:
         Returns:
             Formatted string
         """
-        lines = ["*Opportunity Import Preview*\n"]
+        lines: List[str] = ["*Opportunity Import Preview*\n"]
 
         lines.append(f"📊 Total rows: {import_results['total_rows']}")
         lines.append(f"➕ To create: {len(import_results['to_create'])}")
@@ -749,12 +808,14 @@ class CSVHandler:
         if import_results['to_create'][:5]:
             lines.append("\n*New opportunities:*")
             for item in import_results['to_create'][:5]:
-                value = item['data'].get('monetary_value', 'N/A')
+                value: Any = item['data'].get('monetary_value', 'N/A')
                 if isinstance(value, (int, float)):
                     value = f"${value:,.0f}"
                 lines.append(f"  • {item['name']} ({value})")
             if len(import_results['to_create']) > 5:
-                lines.append(f"  ... and {len(import_results['to_create']) - 5} more")
+                lines.append(
+                    f"  ... and {len(import_results['to_create']) - 5} more"
+                )
 
         # Show first few updates
         if import_results['to_update'][:5]:
@@ -762,7 +823,9 @@ class CSVHandler:
             for item in import_results['to_update'][:5]:
                 lines.append(f"  • {item['name']} (ID: {item['id']})")
             if len(import_results['to_update']) > 5:
-                lines.append(f"  ... and {len(import_results['to_update']) - 5} more")
+                lines.append(
+                    f"  ... and {len(import_results['to_update']) - 5} more"
+                )
 
         # Show errors
         if import_results['errors'][:3]:
@@ -772,7 +835,7 @@ class CSVHandler:
 
         return '\n'.join(lines)
 
-    def format_import_results(self, execution: Dict[str, Any]) -> str:
+    def format_import_results(self, execution: ExecutionResults) -> str:
         """
         Format import execution results.
 
@@ -782,7 +845,7 @@ class CSVHandler:
         Returns:
             Formatted string
         """
-        lines = ["*Import Complete*\n"]
+        lines: List[str] = ["*Import Complete*\n"]
 
         lines.append(f"✅ Created: {len(execution['created'])}")
         lines.append(f"✏️ Updated: {len(execution['updated'])}")

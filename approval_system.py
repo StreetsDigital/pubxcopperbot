@@ -1,21 +1,37 @@
 """Approval system for Copper CRM updates."""
 
-import logging
-import json
-import os
 import fcntl
+import json
+import logging
+import os
 import tempfile
-from typing import Dict, List, Optional, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Set
+
 from config import Config
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
+
+# Type aliases for common patterns
+JsonDict = Dict[str, Any]
+RequestDict = Dict[str, Any]
+BlockDict = Dict[str, Any]
 
 
 class ApprovalSystem:
     """Manage approval workflow for CRM updates with persistent storage."""
 
-    def __init__(self, data_dir: Optional[str] = None):
+    # Instance variable type annotations
+    data_dir: str
+    state_file: str
+    lock_file: str
+    pending_approvals: Dict[str, RequestDict]
+    approval_history: List[RequestDict]
+    approvers: Set[str]
+    admins: Set[str]
+    user_mapping: Dict[str, int]
+
+    def __init__(self, data_dir: Optional[str] = None) -> None:
         """Initialize the approval system with persistent storage.
 
         Args:
@@ -29,19 +45,21 @@ class ApprovalSystem:
         os.makedirs(self.data_dir, exist_ok=True)
 
         # Load persisted state or initialize empty
-        state = self._load_state()
-        self.pending_approvals: Dict[str, Dict] = state.get("pending_approvals", {})
-        self.approval_history: List[Dict] = state.get("approval_history", [])
-        self.approvers: set = set(state.get("approvers", []))
+        state: JsonDict = self._load_state()
+        self.pending_approvals = state.get("pending_approvals", {})
+        self.approval_history = state.get("approval_history", [])
+        self.approvers = set(state.get("approvers", []))
         # Admin users can bypass approval (auto-approve their own actions)
-        self.admins: set = set(state.get("admins", []))
+        self.admins = set(state.get("admins", []))
         # Slack user ID -> Copper user ID mapping
-        self.user_mapping: Dict[str, int] = state.get("user_mapping", {})
+        self.user_mapping = state.get("user_mapping", {})
 
-        logger.info(f"Loaded approval state: {len(self.pending_approvals)} pending, "
-                    f"{len(self.approvers)} approvers, {len(self.admins)} admins")
+        logger.info(
+            f"Loaded approval state: {len(self.pending_approvals)} pending, "
+            f"{len(self.approvers)} approvers, {len(self.admins)} admins"
+        )
 
-    def _load_state(self) -> Dict:
+    def _load_state(self) -> JsonDict:
         """Load state from persistent storage.
 
         Returns:
@@ -55,14 +73,14 @@ class ApprovalSystem:
             with open(self.state_file, 'r') as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
                 try:
-                    state = json.load(f)
+                    state: JsonDict = json.load(f)
                     return state
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except json.JSONDecodeError as e:
             logger.error(f"Corrupted state file, starting fresh: {e}")
             return {}
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Error loading state: {e}")
             return {}
 
@@ -75,7 +93,7 @@ class ApprovalSystem:
         Returns:
             True if save was successful.
         """
-        state = {
+        state: JsonDict = {
             "pending_approvals": self.pending_approvals,
             "approval_history": self.approval_history,
             "approvers": list(self.approvers),  # Convert set to list for JSON
@@ -86,12 +104,14 @@ class ApprovalSystem:
 
         try:
             # Create lock file if it doesn't exist
-            lock_fd = os.open(self.lock_file, os.O_CREAT | os.O_RDWR)
+            lock_fd: int = os.open(self.lock_file, os.O_CREAT | os.O_RDWR)
             try:
                 # Acquire exclusive lock
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
                 # Write to temporary file first (atomic write pattern)
+                fd: int
+                temp_path: str
                 fd, temp_path = tempfile.mkstemp(
                     dir=self.data_dir,
                     prefix='.approval_state_',
@@ -105,7 +125,7 @@ class ApprovalSystem:
                     os.replace(temp_path, self.state_file)
                     logger.debug("State saved successfully")
                     return True
-                except Exception:
+                except OSError:
                     # Clean up temp file on failure
                     if os.path.exists(temp_path):
                         os.unlink(temp_path)
@@ -113,7 +133,7 @@ class ApprovalSystem:
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Error saving state: {e}")
             return False
 
@@ -267,7 +287,7 @@ class ApprovalSystem:
         operation: str,
         entity_type: str,
         entity_id: Optional[int] = None,
-        data: Optional[Dict[str, Any]] = None,
+        data: Optional[JsonDict] = None,
         entity_name: str = "Unknown"
     ) -> str:
         """
@@ -284,13 +304,14 @@ class ApprovalSystem:
         Returns:
             Request ID
         """
-        timestamp = datetime.now().timestamp()
+        timestamp: float = datetime.now().timestamp()
+        request_id: str
         if entity_id:
             request_id = f"{operation}_{entity_type}_{entity_id}_{timestamp}"
         else:
             request_id = f"{operation}_{entity_type}_{timestamp}"
 
-        request = {
+        request: RequestDict = {
             'request_id': request_id,
             'requester_id': requester_id,
             'operation': operation,
@@ -315,7 +336,7 @@ class ApprovalSystem:
         requester_id: str,
         entity_type: str,
         entity_id: int,
-        updates: Dict[str, Any],
+        updates: JsonDict,
         entity_name: str = "Unknown"
     ) -> str:
         """
@@ -340,7 +361,7 @@ class ApprovalSystem:
             entity_name=entity_name
         )
 
-    def get_pending_requests(self) -> List[Dict]:
+    def get_pending_requests(self) -> List[RequestDict]:
         """
         Get all pending approval requests.
 
@@ -352,7 +373,7 @@ class ApprovalSystem:
             if req['status'] == 'pending'
         ]
 
-    def get_request(self, request_id: str) -> Optional[Dict]:
+    def get_request(self, request_id: str) -> Optional[RequestDict]:
         """
         Get a specific request.
 
@@ -383,7 +404,7 @@ class ApprovalSystem:
             logger.error(f"User {approver_id} is not an approver")
             return False
 
-        request = self.pending_approvals[request_id]
+        request: RequestDict = self.pending_approvals[request_id]
 
         if request['status'] != 'pending':
             logger.error(f"Request {request_id} is not pending")
@@ -399,7 +420,9 @@ class ApprovalSystem:
         logger.info(f"Request {request_id} approved by {approver_id}")
         return True
 
-    def reject_request(self, request_id: str, approver_id: str, reason: str = "") -> bool:
+    def reject_request(
+        self, request_id: str, approver_id: str, reason: str = ""
+    ) -> bool:
         """
         Reject an update request.
 
@@ -419,7 +442,7 @@ class ApprovalSystem:
             logger.error(f"User {approver_id} is not an approver")
             return False
 
-        request = self.pending_approvals[request_id]
+        request: RequestDict = self.pending_approvals[request_id]
 
         if request['status'] != 'pending':
             logger.error(f"Request {request_id} is not pending")
@@ -453,7 +476,7 @@ class ApprovalSystem:
             logger.warning(f"Request {request_id} not found for completion")
             return False
 
-        request = self.pending_approvals[request_id]
+        request: RequestDict = self.pending_approvals[request_id]
         request['status'] = 'completed'
         request['completed_at'] = datetime.now().isoformat()
 
@@ -464,7 +487,7 @@ class ApprovalSystem:
         logger.info(f"Request {request_id} completed")
         return True
 
-    def format_request_for_approval(self, request: Dict) -> str:
+    def format_request_for_approval(self, request: RequestDict) -> str:
         """
         Format a request for display in Slack.
 
@@ -474,12 +497,13 @@ class ApprovalSystem:
         Returns:
             Formatted string
         """
-        operation = request.get('operation', 'update')
-        entity_type = request['entity_type'].title()
-        entity_name = request['entity_name']
-        requester = request['requester_id']
-        data = request.get('data', request.get('updates', {}))
+        operation: str = request.get('operation', 'update')
+        entity_type: str = request['entity_type'].title()
+        entity_name: str = request['entity_name']
+        requester: str = request['requester_id']
+        data: JsonDict = request.get('data') or request.get('updates') or {}
 
+        message: str
         if operation == 'create':
             message = f"*Create Request: New {entity_type}*\n\n"
             message += f"👤 Requested by: <@{requester}>\n"
@@ -505,7 +529,9 @@ class ApprovalSystem:
 
         return message
 
-    def create_approval_blocks(self, request_id: str, request: Dict) -> List[Dict]:
+    def create_approval_blocks(
+        self, request_id: str, request: RequestDict
+    ) -> List[BlockDict]:
         """
         Create Slack Block Kit blocks for approval UI.
 
@@ -516,13 +542,14 @@ class ApprovalSystem:
         Returns:
             List of Block Kit blocks
         """
-        operation = request.get('operation', 'update')
-        entity_type = request['entity_type'].title()
-        entity_name = request['entity_name']
-        requester = request['requester_id']
-        data = request.get('data', request.get('updates', {}))
+        operation: str = request.get('operation', 'update')
+        entity_type: str = request['entity_type'].title()
+        entity_name: str = request['entity_name']
+        requester: str = request['requester_id']
+        data: JsonDict = request.get('data') or request.get('updates') or {}
 
         # Header based on operation
+        header_text: str
         if operation == 'create':
             header_text = f"➕ Create Request: New {entity_type}"
         elif operation == 'delete':
@@ -530,7 +557,7 @@ class ApprovalSystem:
         else:
             header_text = f"✏️ Update Request: {entity_type}"
 
-        blocks = [
+        blocks: List[BlockDict] = [
             {
                 "type": "header",
                 "text": {
@@ -567,12 +594,17 @@ class ApprovalSystem:
                 }
             })
         else:
+            entity_field_text: str = (
+                f"*Entity:*\n{entity_name}"
+                if operation != 'create'
+                else f"*Type:*\n{entity_type}"
+            )
             blocks.append({
                 "type": "section",
                 "fields": [
                     {
                         "type": "mrkdwn",
-                        "text": f"*Entity:*\n{entity_name}" if operation != 'create' else f"*Type:*\n{entity_type}"
+                        "text": entity_field_text
                     },
                     {
                         "type": "mrkdwn",
@@ -585,14 +617,16 @@ class ApprovalSystem:
 
         # Data fields
         if data:
-            data_fields = []
+            data_fields: List[BlockDict] = []
             for field, value in data.items():
                 data_fields.append({
                     "type": "mrkdwn",
                     "text": f"*{field}:*\n{value}"
                 })
 
-            label = "New Record Details:" if operation == 'create' else "Proposed Changes:"
+            label: str = (
+                "New Record Details:" if operation == 'create' else "Proposed Changes:"
+            )
             blocks.append({
                 "type": "section",
                 "text": {
@@ -603,7 +637,7 @@ class ApprovalSystem:
 
             # Add data fields in chunks of 10 (Slack limit)
             for i in range(0, len(data_fields), 10):
-                chunk = data_fields[i:i+10]
+                chunk: List[BlockDict] = data_fields[i:i + 10]
                 blocks.append({
                     "type": "section",
                     "fields": chunk

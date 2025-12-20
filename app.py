@@ -1,22 +1,36 @@
 """Copper CRM Slack Bot - Main Application."""
 
-import os
 import json
 import logging
+import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
+from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Callable, Dict, List, Optional, Union
+
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk import WebClient
+
+from approval_system import ApprovalSystem
 from config import Config
+from copper_client import CopperClient
+from csv_handler import CSVHandler
+from query_processor import QueryProcessor
+from task_processor import TaskProcessor
+
+# Type aliases for common patterns
+JsonDict = Dict[str, Any]
+SlackEvent = Dict[str, Any]
+SlackCommand = Dict[str, Any]
+SlackAction = Dict[str, Any]
+SayFunction = Callable[..., Any]
+AckFunction = Callable[[], None]
+CsvRow = Dict[str, str]
+ReconciliationResult = Dict[str, Any]
 
 # Track startup time for uptime calculation
-_start_time = datetime.now()
-from copper_client import CopperClient
-from query_processor import QueryProcessor
-from csv_handler import CSVHandler
-from approval_system import ApprovalSystem
-from task_processor import TaskProcessor
+_start_time: datetime = datetime.now()
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +58,7 @@ task_processor = TaskProcessor(copper_client)
 
 
 @app.event("app_mention")
-def handle_mention(event, say, client):
+def handle_mention(event: SlackEvent, say: SayFunction, client: WebClient) -> None:
     """
     Handle when the bot is mentioned in a channel.
 
@@ -54,11 +68,11 @@ def handle_mention(event, say, client):
         client: Slack client
     """
     try:
-        user = event.get("user")
-        text = event.get("text", "")
+        user: str = event.get("user", "")
+        text: str = event.get("text", "")
 
         # Remove bot mention from text
-        bot_user_id = client.auth_test()["user_id"]
+        bot_user_id: str = client.auth_test()["user_id"]
         text = text.replace(f"<@{bot_user_id}>", "").strip()
 
         if not text:
@@ -116,7 +130,7 @@ def handle_mention(event, say, client):
 
 
 @app.event("message")
-def handle_message(event, say, client):
+def handle_message(event: SlackEvent, say: SayFunction, client: WebClient) -> None:
     """
     Handle direct messages to the bot.
 
@@ -134,8 +148,8 @@ def handle_message(event, say, client):
         return
 
     try:
-        user = event.get("user")
-        text = event.get("text", "").strip()
+        user: str = event.get("user", "")
+        text: str = event.get("text", "").strip()
 
         if not text:
             return
@@ -203,7 +217,7 @@ def handle_message(event, say, client):
 
 
 @app.event("file_shared")
-def handle_file_upload(event, say, client):
+def handle_file_upload(event: SlackEvent, say: SayFunction, client: WebClient) -> None:
     """
     Handle file uploads for CSV/Excel processing.
 
@@ -218,14 +232,18 @@ def handle_file_upload(event, say, client):
         client: Slack client
     """
     try:
-        file_id = event.get("file_id")
-        user_id = event.get("user_id")
-        channel_id = event.get("channel_id")
+        file_id: str = event.get("file_id", "")
+        user_id: str = event.get("user_id", "")
+        channel_id: str = event.get("channel_id", "")
+
+        if not file_id:
+            say(text="No file ID found in event.")
+            return
 
         # Get file info
         file_info = client.files_info(file=file_id)
-        file_data = file_info["file"]
-        filename = file_data["name"]
+        file_data: JsonDict = file_info["file"]
+        filename: str = file_data["name"]
 
         # Check if it's a supported file type
         supported_extensions = ('.csv', '.xlsx', '.xls')
@@ -240,9 +258,10 @@ def handle_file_upload(event, say, client):
         say(text="Processing your file... :page_facing_up:")
 
         # Download file
+        token: str = Config.SLACK_BOT_TOKEN or ""
         file_content = csv_handler.download_file(
             file_data["url_private"],
-            Config.SLACK_BOT_TOKEN
+            token
         )
 
         # Parse file (CSV or Excel)
@@ -275,7 +294,7 @@ def handle_file_upload(event, say, client):
         say(text=f"Sorry, I encountered an error processing your file: {str(e)}")
 
 
-def _has_contact_data(rows: list) -> bool:
+def _has_contact_data(rows: List[CsvRow]) -> bool:
     """Check if rows contain contact/person data for reconciliation."""
     if not rows:
         return False
@@ -285,7 +304,13 @@ def _has_contact_data(rows: list) -> bool:
     return len(columns.intersection(contact_indicators)) >= 2
 
 
-def _handle_crm_lookup(rows: list, filename: str, channel_id: str, say, client):
+def _handle_crm_lookup(
+    rows: List[CsvRow],
+    filename: str,
+    channel_id: str,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """Handle CRM lookup/enrichment for file."""
     results = csv_handler.process_csv_queries(rows)
     enriched_csv = csv_handler.generate_enriched_csv(results['enriched_rows'])
@@ -302,7 +327,14 @@ def _handle_crm_lookup(rows: list, filename: str, channel_id: str, say, client):
     )
 
 
-def _handle_opportunity_import(rows: list, user_id: str, channel_id: str, say, client, is_admin: bool):
+def _handle_opportunity_import(
+    rows: List[CsvRow],
+    user_id: str,
+    channel_id: str,
+    say: SayFunction,
+    client: WebClient,
+    is_admin: bool
+) -> None:
     """Handle opportunity import from file."""
     import_results = csv_handler.process_opportunity_import(rows)
     preview = csv_handler.format_import_preview(import_results)
@@ -353,11 +385,23 @@ def _handle_opportunity_import(rows: list, user_id: str, channel_id: str, say, c
                 logger.error(f"Failed to notify approver: {e}")
 
 
-def _handle_contact_reconciliation(rows: list, user_id: str, channel_id: str, say, client, is_admin: bool):
+def _handle_contact_reconciliation(
+    rows: List[CsvRow],
+    user_id: str,
+    channel_id: str,
+    say: SayFunction,
+    client: WebClient,
+    is_admin: bool
+) -> None:
     """Handle contact reconciliation (LinkedIn exports, etc.)."""
     say(text="Cross-referencing contacts with CRM... :mag:")
 
-    reconciliation = {'matches': [], 'not_found': [], 'mismatches': [], 'total': len(rows)}
+    reconciliation: ReconciliationResult = {
+        'matches': [],
+        'not_found': [],
+        'mismatches': [],
+        'total': len(rows)
+    }
 
     for row in rows:
         row_lower = {k.lower(): v for k, v in row.items()}
@@ -461,7 +505,7 @@ def _handle_contact_reconciliation(rows: list, user_id: str, channel_id: str, sa
 
 
 @app.command("/copper")
-def handle_copper_command(ack, command, say):
+def handle_copper_command(ack: AckFunction, command: SlackCommand, say: SayFunction) -> None:
     """
     Handle /copper slash command.
 
@@ -521,7 +565,12 @@ def handle_copper_command(ack, command, say):
 
 
 @app.command("/copper-update")
-def handle_update_command(ack, command, say, client):
+def handle_update_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle /copper-update slash command to request CRM record updates.
 
@@ -534,8 +583,8 @@ def handle_update_command(ack, command, say, client):
     ack()
 
     try:
-        text = command.get("text", "").strip()
-        user = command.get("user_id")
+        text: str = command.get("text", "").strip()
+        user: str = command.get("user_id", "")
 
         if not text:
             say(
@@ -545,7 +594,7 @@ def handle_update_command(ack, command, say, client):
             return
 
         # Parse command: entity_type entity_id field=value field=value
-        parts = text.split()
+        parts: List[str] = text.split()
         if len(parts) < 3:
             say(text="Invalid format. Need at least: entity_type entity_id field=value")
             return
@@ -623,7 +672,11 @@ def handle_update_command(ack, command, say, client):
 
 
 @app.command("/copper-add-approver")
-def handle_add_approver_command(ack, command, say):
+def handle_add_approver_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction
+) -> None:
     """
     Handle /copper-add-approver command (admin only).
 
@@ -655,7 +708,11 @@ def handle_add_approver_command(ack, command, say):
 
 
 @app.command("/copper-add-admin")
-def handle_add_admin_command(ack, command, say):
+def handle_add_admin_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction
+) -> None:
     """
     Handle /copper-add-admin command to add admin users who bypass approval.
 
@@ -693,7 +750,11 @@ def handle_add_admin_command(ack, command, say):
 
 
 @app.command("/copper-pending")
-def handle_pending_command(ack, command, say):
+def handle_pending_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction
+) -> None:
     """
     Handle /copper-pending command to view pending approvals.
 
@@ -705,7 +766,7 @@ def handle_pending_command(ack, command, say):
     ack()
 
     try:
-        user = command.get("user_id")
+        user: str = command.get("user_id", "")
 
         if not approval_system.is_approver(user):
             say(text="You are not authorized to view pending approvals.")
@@ -735,7 +796,12 @@ def handle_pending_command(ack, command, say):
 
 
 @app.action(lambda action_id: action_id.startswith("approve_"))
-def handle_approve_button(ack, action, say, client):
+def handle_approve_button(
+    ack: AckFunction,
+    action: SlackAction,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle approve button clicks.
 
@@ -748,14 +814,14 @@ def handle_approve_button(ack, action, say, client):
     ack()
 
     try:
-        request_id = action["value"]
-        user_id = action["user"]["id"]
+        request_id: str = action["value"]
+        user_id: str = action["user"]["id"]
 
         if not approval_system.is_approver(user_id):
             say(text="You are not authorized to approve requests.")
             return
 
-        request = approval_system.get_request(request_id)
+        request: Optional[JsonDict] = approval_system.get_request(request_id)
         if not request:
             say(text=f"Request {request_id} not found.")
             return
@@ -766,10 +832,10 @@ def handle_approve_button(ack, action, say, client):
             return
 
         # Execute the operation in Copper
-        operation = request.get('operation', 'update')
-        entity_type = request['entity_type']
-        entity_id = request.get('entity_id')
-        data = request.get('data', request.get('updates', {}))
+        operation: str = request.get('operation', 'update')
+        entity_type: str = request['entity_type']
+        entity_id: Optional[int] = request.get('entity_id')
+        data: JsonDict = request.get('data', request.get('updates', {}) or {})
 
         result = None
         success = False
@@ -808,7 +874,10 @@ def handle_approve_button(ack, action, say, client):
                         logger.error(f"Failed to notify requester: {e}")
 
             elif operation == 'delete':
-                # Delete entity
+                # Delete entity (requires valid entity_id)
+                if entity_id is None:
+                    say(text="❌ Cannot delete: entity ID is missing.")
+                    return
                 if entity_type in ['person', 'people']:
                     success = copper_client.delete_person(entity_id)
                 elif entity_type in ['company', 'companies']:
@@ -837,7 +906,10 @@ def handle_approve_button(ack, action, say, client):
                         logger.error(f"Failed to notify requester: {e}")
 
             else:  # update
-                # Update entity
+                # Update entity (requires valid entity_id)
+                if entity_id is None:
+                    say(text="❌ Cannot update: entity ID is missing.")
+                    return
                 if entity_type in ['person', 'people']:
                     result = copper_client.update_person(entity_id, data)
                 elif entity_type in ['company', 'companies']:
@@ -879,7 +951,12 @@ def handle_approve_button(ack, action, say, client):
 
 
 @app.command("/copper-create")
-def handle_create_command(ack, command, say, client):
+def handle_create_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle /copper-create slash command to request CRM record creation.
 
@@ -968,7 +1045,12 @@ def handle_create_command(ack, command, say, client):
 
 
 @app.command("/copper-delete")
-def handle_delete_command(ack, command, say, client):
+def handle_delete_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle /copper-delete slash command to request CRM record deletion.
 
@@ -1070,7 +1152,12 @@ def handle_delete_command(ack, command, say, client):
 
 
 @app.action(lambda action_id: action_id.startswith("reject_"))
-def handle_reject_button(ack, action, say, client):
+def handle_reject_button(
+    ack: AckFunction,
+    action: SlackAction,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle reject button clicks.
 
@@ -1121,7 +1208,12 @@ def handle_reject_button(ack, action, say, client):
 # Task Creation (Natural Language)
 # =============================================================================
 
-def _execute_copper_operation(operation: str, entity_type: str, data: dict, entity_id: int = None):
+def _execute_copper_operation(
+    operation: str,
+    entity_type: str,
+    data: JsonDict,
+    entity_id: Optional[int] = None
+) -> Optional[Union[JsonDict, bool]]:
     """
     Execute a Copper CRM operation directly.
 
@@ -1149,6 +1241,8 @@ def _execute_copper_operation(operation: str, entity_type: str, data: dict, enti
             elif entity_type in ['project', 'projects']:
                 return copper_client.create_project(data)
         elif operation == 'update':
+            if entity_id is None:
+                return None
             if entity_type in ['task', 'tasks']:
                 return copper_client.update_task(entity_id, data)
             elif entity_type in ['person', 'people']:
@@ -1162,6 +1256,8 @@ def _execute_copper_operation(operation: str, entity_type: str, data: dict, enti
             elif entity_type in ['project', 'projects']:
                 return copper_client.update_project(entity_id, data)
         elif operation == 'delete':
+            if entity_id is None:
+                return None
             if entity_type in ['task', 'tasks']:
                 return copper_client.delete_task(entity_id)
             elif entity_type in ['person', 'people']:
@@ -1181,7 +1277,12 @@ def _execute_copper_operation(operation: str, entity_type: str, data: dict, enti
     return None
 
 
-def _handle_task_request(text: str, user: str, say, client):
+def _handle_task_request(
+    text: str,
+    user: str,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle a natural language task request.
 
@@ -1293,7 +1394,12 @@ def _handle_task_request(text: str, user: str, say, client):
 
 
 @app.command("/copper-task")
-def handle_task_command(ack, command, say, client):
+def handle_task_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction,
+    client: WebClient
+) -> None:
     """
     Handle /copper-task slash command for natural language task creation.
 
@@ -1302,8 +1408,8 @@ def handle_task_command(ack, command, say, client):
     ack()
 
     try:
-        text = command.get("text", "").strip()
-        user = command.get("user_id")
+        text: str = command.get("text", "").strip()
+        user: str = command.get("user_id", "")
 
         if not text:
             say(
@@ -1330,7 +1436,11 @@ def handle_task_command(ack, command, say, client):
 
 
 @app.command("/copper-map-user")
-def handle_map_user_command(ack, command, say):
+def handle_map_user_command(
+    ack: AckFunction,
+    command: SlackCommand,
+    say: SayFunction
+) -> None:
     """
     Handle /copper-map-user command to map Slack users to Copper users.
 
@@ -1382,11 +1492,11 @@ def handle_map_user_command(ack, command, say):
 class HealthHandler(BaseHTTPRequestHandler):
     """HTTP handler for health check endpoint."""
 
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: Any) -> None:
         """Suppress default HTTP logging to avoid noise."""
         pass
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         """Handle GET requests."""
         if self.path == '/health':
             self._handle_health()
@@ -1395,7 +1505,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, 'Not Found')
 
-    def _handle_health(self):
+    def _handle_health(self) -> None:
         """Return health status with component checks."""
         uptime = datetime.now() - _start_time
         uptime_seconds = int(uptime.total_seconds())
@@ -1442,7 +1552,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(health, indent=2).encode())
 
-    def _handle_root(self):
+    def _handle_root(self) -> None:
         """Simple root response."""
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
@@ -1450,14 +1560,14 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'Copper CRM Slack Bot - OK')
 
 
-def start_health_server(port: int):
+def start_health_server(port: int) -> None:
     """Start the health check HTTP server in a background thread."""
     server = HTTPServer(('0.0.0.0', port), HealthHandler)
     logger.info(f"Health server running on port {port}")
     server.serve_forever()
 
 
-def main():
+def main() -> None:
     """Start the Slack bot."""
     logger.info("Starting Copper CRM Slack Bot...")
 

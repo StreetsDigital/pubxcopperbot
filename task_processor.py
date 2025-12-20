@@ -1,18 +1,31 @@
 """Natural language task processor for Copper CRM."""
 
-import re
+import json
 import logging
+import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
-from dateutil import parser as date_parser
-from dateutil.relativedelta import relativedelta, MO, TU, WE, TH, FR, SA, SU
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
 from anthropic import Anthropic
+from dateutil import parser as date_parser
+from dateutil.relativedelta import FR, MO, SA, SU, TH, TU, WE, relativedelta
+
 from config import Config
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from copper_client import CopperClient
+    from dateutil.relativedelta import weekday
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+# Type aliases for common patterns
+JsonDict = Dict[str, Any]
+ParsedTask = Dict[str, Any]
+EntityDict = Dict[str, Any]
+CopperTask = Dict[str, Any]
 
 # Day name to dateutil weekday mapping
-WEEKDAY_MAP = {
+WEEKDAY_MAP: Dict[str, "weekday"] = {
     'monday': MO, 'mon': MO,
     'tuesday': TU, 'tue': TU, 'tues': TU,
     'wednesday': WE, 'wed': WE,
@@ -26,7 +39,10 @@ WEEKDAY_MAP = {
 class TaskProcessor:
     """Process natural language task requests."""
 
-    def __init__(self, copper_client=None):
+    copper_client: Optional["CopperClient"]
+    claude_client: Optional[Anthropic]
+
+    def __init__(self, copper_client: Optional["CopperClient"] = None) -> None:
         """Initialize the task processor.
 
         Args:
@@ -70,7 +86,7 @@ class TaskProcessor:
 
         return False
 
-    def parse_task(self, text: str, requester_slack_id: str) -> Dict[str, Any]:
+    def parse_task(self, text: str, requester_slack_id: str) -> ParsedTask:
         """Parse a natural language task request.
 
         Args:
@@ -84,7 +100,7 @@ class TaskProcessor:
             return self._parse_with_claude(text, requester_slack_id)
         return self._parse_basic(text, requester_slack_id)
 
-    def _parse_with_claude(self, text: str, requester_slack_id: str) -> Dict[str, Any]:
+    def _parse_with_claude(self, text: str, requester_slack_id: str) -> ParsedTask:
         """Use Claude to parse task details.
 
         Args:
@@ -95,8 +111,8 @@ class TaskProcessor:
             Parsed task details.
         """
         try:
-            today = datetime.now()
-            prompt = f"""Parse this task request and extract the details.
+            today: datetime = datetime.now()
+            prompt: str = f"""Parse this task request and extract the details.
 
 Task request: "{text}"
 Today's date: {today.strftime('%A, %B %d, %Y')}
@@ -122,6 +138,8 @@ Output: {{"task_description": "Send proposal to Netflix", "assignee": "@sarah", 
 
 Return ONLY the JSON object, no other text."""
 
+            # claude_client is guaranteed to be non-None here (checked by caller)
+            assert self.claude_client is not None
             message = self.claude_client.messages.create(
                 model="claude-3-5-sonnet-20241022",
                 max_tokens=1024,
@@ -129,7 +147,11 @@ Return ONLY the JSON object, no other text."""
                 messages=[{"role": "user", "content": prompt}]
             )
 
-            response_text = message.content[0].text.strip()
+            # Extract text from response (content blocks can be different types)
+            first_block = message.content[0]
+            if not hasattr(first_block, 'text'):
+                raise ValueError("Unexpected response format from Claude")
+            response_text: str = first_block.text.strip()
 
             # Clean up markdown code blocks if present
             if response_text.startswith('```'):
@@ -138,8 +160,7 @@ Return ONLY the JSON object, no other text."""
                     response_text = response_text[4:]
                 response_text = response_text.strip()
 
-            import json
-            parsed = json.loads(response_text)
+            parsed: ParsedTask = json.loads(response_text)
 
             # Convert assignee
             if parsed.get('assignee') == 'self':
@@ -159,11 +180,11 @@ Return ONLY the JSON object, no other text."""
 
             return parsed
 
-        except Exception as e:
+        except (json.JSONDecodeError, IndexError, AssertionError, ValueError) as e:
             logger.error(f"Claude task parsing failed: {e}")
             return self._parse_basic(text, requester_slack_id)
 
-    def _parse_basic(self, text: str, requester_slack_id: str) -> Dict[str, Any]:
+    def _parse_basic(self, text: str, requester_slack_id: str) -> ParsedTask:
         """Basic fallback parsing without Claude.
 
         Args:
@@ -173,7 +194,7 @@ Return ONLY the JSON object, no other text."""
         Returns:
             Parsed task details.
         """
-        result = {
+        result: ParsedTask = {
             'task_description': text,
             'assignee_slack_id': requester_slack_id,
             'due_date': None,
@@ -185,19 +206,21 @@ Return ONLY the JSON object, no other text."""
             'requester_slack_id': requester_slack_id,
         }
 
-        text_lower = text.lower()
+        text_lower: str = text.lower()
 
         # Extract due date
-        due_date = self._parse_due_date(text_lower)
+        due_date: Optional[datetime] = self._parse_due_date(text_lower)
         if due_date:
             result['due_date'] = due_date.strftime('%Y-%m-%d')
 
         # Extract time
-        time_match = re.search(r'at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', text_lower)
+        time_match: Optional[re.Match[str]] = re.search(
+            r'at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', text_lower
+        )
         if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2) or 0)
-            ampm = time_match.group(3)
+            hour: int = int(time_match.group(1))
+            minute: int = int(time_match.group(2) or 0)
+            ampm: Optional[str] = time_match.group(3)
             if ampm == 'pm' and hour < 12:
                 hour += 12
             elif ampm == 'am' and hour == 12:
@@ -209,13 +232,16 @@ Return ONLY the JSON object, no other text."""
             result['priority'] = 'high'
 
         # Extract mentioned Slack user
-        slack_mention = re.search(r'<@([A-Z0-9]+)(?:\|[^>]+)?>', text)
+        slack_mention: Optional[re.Match[str]] = re.search(
+            r'<@([A-Z0-9]+)(?:\|[^>]+)?>', text
+        )
         if slack_mention:
             result['assignee_slack_id'] = slack_mention.group(1)
 
         # Try to extract company/entity name (capitalized words after "with", "for", "to", "at")
-        entity_match = re.search(
-            r'(?:with|for|to|at|from)\s+([A-Z][A-Za-z0-9\s&]+?)(?:\s+(?:by|on|next|tomorrow|today|this)|$)',
+        entity_match: Optional[re.Match[str]] = re.search(
+            r'(?:with|for|to|at|from)\s+([A-Z][A-Za-z0-9\s&]+?)'
+            r'(?:\s+(?:by|on|next|tomorrow|today|this)|$)',
             text
         )
         if entity_match:
@@ -236,7 +262,9 @@ Return ONLY the JSON object, no other text."""
         Returns:
             datetime object or None.
         """
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today: datetime = datetime.now().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
         # Today/tomorrow
         if 'today' in text:
@@ -257,35 +285,35 @@ Return ONLY the JSON object, no other text."""
             return today
 
         # In X days/weeks
-        in_days = re.search(r'in\s+(\d+)\s+days?', text)
+        in_days: Optional[re.Match[str]] = re.search(r'in\s+(\d+)\s+days?', text)
         if in_days:
             return today + timedelta(days=int(in_days.group(1)))
 
-        in_weeks = re.search(r'in\s+(\d+)\s+weeks?', text)
+        in_weeks: Optional[re.Match[str]] = re.search(r'in\s+(\d+)\s+weeks?', text)
         if in_weeks:
             return today + timedelta(weeks=int(in_weeks.group(1)))
 
         # Specific day names
-        for day_name, weekday in WEEKDAY_MAP.items():
+        for day_name, weekday_val in WEEKDAY_MAP.items():
             if day_name in text:
                 # Check if "next" is before the day
                 if re.search(rf'next\s+{day_name}', text):
-                    return today + relativedelta(weekday=weekday(+1))
+                    return today + relativedelta(weekday=weekday_val(+1))
                 else:
                     # This week's occurrence (or next if already passed)
-                    return today + relativedelta(weekday=weekday(0))
+                    return today + relativedelta(weekday=weekday_val(0))
 
         # Try dateutil parser for explicit dates
-        date_patterns = [
+        date_patterns: List[str] = [
             r'(?:by|on|due)\s+(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)',
             r'(?:by|on|due)\s+([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?)',
         ]
         for pattern in date_patterns:
-            match = re.search(pattern, text)
+            match: Optional[re.Match[str]] = re.search(pattern, text)
             if match:
                 try:
                     return date_parser.parse(match.group(1), fuzzy=True)
-                except Exception:
+                except (ValueError, OverflowError):
                     pass
 
         return None
@@ -300,7 +328,7 @@ Return ONLY the JSON object, no other text."""
             Cleaned task description.
         """
         # Remove common prefixes
-        prefixes = [
+        prefixes: List[str] = [
             r'^remind\s+me\s+to\s+',
             r'^don\'t\s+forget\s+to\s+',
             r'^make\s+sure\s+to\s+',
@@ -311,13 +339,14 @@ Return ONLY the JSON object, no other text."""
             r'^need\s+to\s+',
         ]
 
-        result = text
+        result: str = text
         for prefix in prefixes:
             result = re.sub(prefix, '', result, flags=re.IGNORECASE)
 
         # Remove date/time suffixes
-        suffixes = [
-            r'\s+by\s+(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$',
+        suffixes: List[str] = [
+            r'\s+by\s+(?:next\s+)?'
+            r'(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$',
             r'\s+by\s+tomorrow.*$',
             r'\s+by\s+today.*$',
             r'\s+by\s+end\s+of\s+(?:day|week).*$',
@@ -346,7 +375,7 @@ Return ONLY the JSON object, no other text."""
             Slack user ID or None.
         """
         # Format: <@U12345|username> or <@U12345>
-        match = re.search(r'<@([A-Z0-9]+)', mention)
+        match: Optional[re.Match[str]] = re.search(r'<@([A-Z0-9]+)', mention)
         if match:
             return match.group(1)
         return None
@@ -355,7 +384,7 @@ Return ONLY the JSON object, no other text."""
         self,
         entity_name: str,
         entity_type: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[EntityDict]:
         """Find a related entity in Copper by name.
 
         Args:
@@ -369,7 +398,7 @@ Return ONLY the JSON object, no other text."""
             return None
 
         # Search in order of likelihood
-        search_order = ['companies', 'opportunities', 'people']
+        search_order: List[str] = ['companies', 'opportunities', 'people']
         if entity_type == 'person':
             search_order = ['people', 'companies', 'opportunities']
         elif entity_type == 'opportunity':
@@ -377,6 +406,7 @@ Return ONLY the JSON object, no other text."""
 
         for search_type in search_order:
             try:
+                results: List[JsonDict]
                 if search_type == 'companies':
                     results = self.copper_client.search_companies({'name': entity_name})
                 elif search_type == 'people':
@@ -388,24 +418,28 @@ Return ONLY the JSON object, no other text."""
 
                 if results:
                     # Return the best match
-                    entity = results[0]
+                    entity: JsonDict = results[0]
                     return {
                         'id': entity.get('id'),
                         'name': entity.get('name'),
-                        'type': search_type.rstrip('s') if search_type != 'companies' else 'company',
+                        'type': (
+                            search_type.rstrip('s')
+                            if search_type != 'companies'
+                            else 'company'
+                        ),
                         'copper_type': search_type,
                     }
-            except Exception as e:
+            except (KeyError, IndexError, AttributeError) as e:
                 logger.error(f"Error searching {search_type}: {e}")
 
         return None
 
     def build_copper_task(
         self,
-        parsed: Dict[str, Any],
+        parsed: ParsedTask,
         assignee_copper_id: Optional[int] = None,
-        related_entity: Optional[Dict] = None
-    ) -> Dict[str, Any]:
+        related_entity: Optional[EntityDict] = None
+    ) -> CopperTask:
         """Build a Copper task payload from parsed data.
 
         Args:
@@ -416,7 +450,7 @@ Return ONLY the JSON object, no other text."""
         Returns:
             Copper task creation payload.
         """
-        task = {
+        task: CopperTask = {
             'name': parsed['task_description'],
         }
 
@@ -426,16 +460,16 @@ Return ONLY the JSON object, no other text."""
 
         # Set due date
         if parsed.get('due_date'):
-            due_str = parsed['due_date']
+            due_str: str = parsed['due_date']
             if parsed.get('due_time'):
                 due_str += f" {parsed['due_time']}"
             else:
                 due_str += " 17:00"  # Default to 5 PM
 
             try:
-                due_dt = date_parser.parse(due_str)
+                due_dt: datetime = date_parser.parse(due_str)
                 task['due_date'] = int(due_dt.timestamp())
-            except Exception as e:
+            except (ValueError, OverflowError) as e:
                 logger.error(f"Error parsing due date: {e}")
 
         # Set priority (Copper uses: None, High)
@@ -445,7 +479,7 @@ Return ONLY the JSON object, no other text."""
         # Set related resource
         if related_entity:
             # Copper uses singular type names for related_resource
-            copper_type_map = {
+            copper_type_map: Dict[str, str] = {
                 'company': 'company',
                 'person': 'person',
                 'opportunity': 'opportunity',
@@ -453,13 +487,19 @@ Return ONLY the JSON object, no other text."""
                 'project': 'project',
             }
             task['related_resource'] = {
-                'type': copper_type_map.get(related_entity['type'], related_entity['type']),
+                'type': copper_type_map.get(
+                    related_entity['type'], related_entity['type']
+                ),
                 'id': related_entity['id']
             }
 
         return task
 
-    def format_task_confirmation(self, parsed: Dict, related_entity: Optional[Dict] = None) -> str:
+    def format_task_confirmation(
+        self,
+        parsed: ParsedTask,
+        related_entity: Optional[EntityDict] = None
+    ) -> str:
         """Format a confirmation message for the task.
 
         Args:
@@ -469,10 +509,10 @@ Return ONLY the JSON object, no other text."""
         Returns:
             Formatted confirmation string.
         """
-        lines = [f"*Task:* {parsed['task_description']}"]
+        lines: List[str] = [f"*Task:* {parsed['task_description']}"]
 
         if parsed.get('due_date'):
-            due_str = parsed['due_date']
+            due_str: str = parsed['due_date']
             if parsed.get('due_time'):
                 due_str += f" at {parsed['due_time']}"
             lines.append(f"*Due:* {due_str}")
@@ -481,8 +521,12 @@ Return ONLY the JSON object, no other text."""
             lines.append("*Priority:* High")
 
         if related_entity:
-            lines.append(f"*Linked to:* {related_entity['name']} ({related_entity['type']})")
+            lines.append(
+                f"*Linked to:* {related_entity['name']} ({related_entity['type']})"
+            )
         elif parsed.get('related_entity_name'):
-            lines.append(f"*Related to:* {parsed['related_entity_name']} (not found in CRM)")
+            lines.append(
+                f"*Related to:* {parsed['related_entity_name']} (not found in CRM)"
+            )
 
         return '\n'.join(lines)
