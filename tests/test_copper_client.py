@@ -49,16 +49,73 @@ class TestCopperClientSearch:
         assert len(results) == 1
         assert results[0]["name"] == "Acme Corp"
 
+    @patch('time.sleep', return_value=None)  # Skip retry delays in tests
     @patch('copper_client.requests.request')
-    def test_search_rate_limit(self, mock_request, copper_client):
-        """Test rate limit handling."""
+    def test_search_rate_limit(self, mock_request, mock_sleep, copper_client):
+        """Test rate limit handling with retries.
+
+        When rate limited, the client retries up to 3 times with exponential
+        backoff before returning an empty result.
+        """
         mock_response = Mock()
         mock_response.status_code = 429
         mock_request.return_value = mock_response
 
         results = copper_client.search_people({"name": "Test"})
 
+        # After 3 retries, should return empty list
         assert len(results) == 0
+        # Verify it was called 3 times (initial + 2 retries)
+        assert mock_request.call_count == 3
+
+    @patch('time.sleep', return_value=None)
+    @patch('copper_client.requests.request')
+    def test_search_server_error_retries(self, mock_request, mock_sleep, copper_client):
+        """Test server error (5xx) handling with retries."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_request.return_value = mock_response
+
+        results = copper_client.search_people({"name": "Test"})
+
+        # After 3 retries, should return empty list
+        assert len(results) == 0
+        # Verify it was called 3 times
+        assert mock_request.call_count == 3
+
+    @patch('time.sleep', return_value=None)
+    @patch('copper_client.requests.request')
+    def test_search_connection_error_retries(self, mock_request, mock_sleep, copper_client):
+        """Test connection error handling with retries."""
+        import requests
+        mock_request.side_effect = requests.exceptions.ConnectionError("Connection refused")
+
+        results = copper_client.search_people({"name": "Test"})
+
+        # After 3 retries, should return empty list
+        assert len(results) == 0
+        assert mock_request.call_count == 3
+
+    @patch('time.sleep', return_value=None)
+    @patch('copper_client.requests.request')
+    def test_search_retry_then_success(self, mock_request, mock_sleep, copper_client):
+        """Test that search succeeds after initial failures."""
+        # First call fails, second succeeds
+        mock_fail_response = Mock()
+        mock_fail_response.status_code = 503
+
+        mock_success_response = Mock()
+        mock_success_response.status_code = 200
+        mock_success_response.json.return_value = [{"id": 1, "name": "John"}]
+
+        mock_request.side_effect = [mock_fail_response, mock_success_response]
+
+        results = copper_client.search_people({"name": "John"})
+
+        # Should succeed after retry
+        assert len(results) == 1
+        assert results[0]["name"] == "John"
+        assert mock_request.call_count == 2
 
 
 class TestCopperClientCreate:

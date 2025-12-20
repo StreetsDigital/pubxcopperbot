@@ -377,3 +377,67 @@ class TestHealthHandlerDegraded:
             data = json.loads(e.read().decode())
             assert data['status'] == 'degraded'
             assert data['components']['copper_client'] is False
+
+
+class TestMetricsEndpoint:
+    """Test Prometheus metrics endpoint."""
+
+    @pytest.fixture
+    def metrics_server(self):
+        """Set up a server with metrics endpoint."""
+        from metrics import get_metrics, get_metrics_content_type
+
+        class MetricsHandler(BaseHTTPRequestHandler):
+            """Handler with metrics endpoint."""
+
+            def log_message(self, format, *args):
+                pass
+
+            def do_GET(self):
+                if self.path == '/metrics':
+                    metrics_output = get_metrics()
+                    self.send_response(200)
+                    self.send_header('Content-Type', get_metrics_content_type())
+                    self.end_headers()
+                    self.wfile.write(metrics_output)
+                else:
+                    self.send_error(404)
+
+        port = self._find_free_port()
+        server = HTTPServer(('127.0.0.1', port), MetricsHandler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        yield f'http://127.0.0.1:{port}'
+
+        server.shutdown()
+
+    def _find_free_port(self):
+        """Find a free port for testing."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            return s.getsockname()[1]
+
+    def test_metrics_endpoint_returns_200(self, metrics_server):
+        """Test metrics endpoint returns 200."""
+        url = f'{metrics_server}/metrics'
+        response = urllib.request.urlopen(url, timeout=5)
+        assert response.status == 200
+
+    def test_metrics_returns_prometheus_format(self, metrics_server):
+        """Test metrics returns Prometheus format."""
+        url = f'{metrics_server}/metrics'
+        response = urllib.request.urlopen(url, timeout=5)
+        content_type = response.headers.get('Content-Type', '')
+        assert 'text/plain' in content_type or 'openmetrics' in content_type
+
+    def test_metrics_contains_expected_metrics(self, metrics_server):
+        """Test metrics contains expected metric names."""
+        url = f'{metrics_server}/metrics'
+        response = urllib.request.urlopen(url, timeout=5)
+        data = response.read().decode()
+
+        # Check for our custom metrics
+        assert 'copperbot' in data
+        assert 'copperbot_uptime_seconds' in data or 'copperbot_pending_approvals' in data

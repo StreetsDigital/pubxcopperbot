@@ -4,6 +4,13 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 import requests
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+    before_sleep_log,
+)
 
 from config import Config
 
@@ -13,6 +20,20 @@ logger = logging.getLogger(__name__)
 JsonDict = Dict[str, Any]
 JsonList = List[JsonDict]
 ApiResponse = Union[JsonDict, JsonList]
+
+
+class RetryableAPIError(Exception):
+    """Exception raised for API errors that should trigger a retry."""
+
+    def __init__(self, message: str, status_code: int = 0) -> None:
+        """Initialize the exception.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code that caused the error
+        """
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class CopperClient:
@@ -43,6 +64,69 @@ class CopperClient:
             'Content-Type': 'application/json'
         }
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((
+            RetryableAPIError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        )),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    def _make_request_with_retry(
+        self,
+        method: str,
+        url: str,
+        data: Optional[JsonDict] = None
+    ) -> requests.Response:
+        """
+        Make an HTTP request with automatic retry on transient failures.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Full URL to request
+            data: Request payload
+
+        Returns:
+            Response object
+
+        Raises:
+            RetryableAPIError: For 429 and 5xx errors (triggers retry)
+            requests.exceptions.HTTPError: For 4xx client errors (no retry)
+        """
+        response: requests.Response = requests.request(
+            method=method,
+            url=url,
+            headers=self.headers,
+            json=data,
+            timeout=30
+        )
+
+        # Handle rate limiting - retry with backoff
+        if response.status_code == 429:
+            logger.warning("Rate limit exceeded, will retry...")
+            raise RetryableAPIError(
+                "Rate limit exceeded",
+                status_code=429
+            )
+
+        # Handle server errors - retry with backoff
+        if response.status_code >= 500:
+            logger.warning(
+                f"Server error {response.status_code}, will retry..."
+            )
+            raise RetryableAPIError(
+                f"Server error: {response.status_code}",
+                status_code=response.status_code
+            )
+
+        # 4xx errors are not retryable - raise immediately
+        response.raise_for_status()
+
+        return response
+
     def _make_request(
         self,
         method: str,
@@ -50,7 +134,14 @@ class CopperClient:
         data: Optional[JsonDict] = None
     ) -> ApiResponse:
         """
-        Make a request to the Copper API.
+        Make a request to the Copper API with automatic retry logic.
+
+        Retries up to 3 times with exponential backoff (2s, 4s, 8s) on:
+        - Connection errors and timeouts
+        - Rate limiting (429)
+        - Server errors (5xx)
+
+        Does not retry on client errors (4xx except 429).
 
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -63,33 +154,46 @@ class CopperClient:
         url: str = f"{self.base_url}/{endpoint}"
 
         try:
-            response: requests.Response = requests.request(
-                method=method,
-                url=url,
-                headers=self.headers,
-                json=data,
-                timeout=30
-            )
-
-            # Handle rate limiting
-            if response.status_code == 429:
-                logger.warning("Rate limit exceeded")
-                return {
-                    "error": "Rate limit exceeded. Please try again in a moment.",
-                    "status_code": 429
-                }
-
-            response.raise_for_status()
+            response = self._make_request_with_retry(method, url, data)
             return response.json() if response.content else {}
 
-        except requests.exceptions.RequestException as e:
+        except RetryableAPIError as e:
+            # All retries exhausted for rate limit or server errors
+            logger.error(
+                f"API request failed after retries: {e} "
+                f"(status: {e.status_code})"
+            )
+            return {
+                "error": str(e),
+                "status_code": e.status_code
+            }
+
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout) as e:
+            # All retries exhausted for connection/timeout errors
+            logger.error(f"API request failed after retries: {e}")
+            return {
+                "error": f"API request failed: {e}",
+                "status_code": 503  # Service unavailable
+            }
+
+        except requests.exceptions.HTTPError as e:
+            # Non-retryable HTTP errors (4xx)
+            status_code: int = 400
+            if e.response is not None:
+                status_code = e.response.status_code
             logger.error(f"API request failed: {str(e)}")
-            status_code: int = 500
-            if hasattr(e, 'response') and e.response is not None:
-                status_code = getattr(e.response, 'status_code', 500)
             return {
                 "error": f"API request failed: {str(e)}",
                 "status_code": status_code
+            }
+
+        except requests.exceptions.RequestException as e:
+            # Other request errors (shouldn't reach here normally)
+            logger.error(f"API request failed: {str(e)}")
+            return {
+                "error": f"API request failed: {str(e)}",
+                "status_code": 500
             }
 
     def search_people(self, criteria: JsonDict) -> JsonList:

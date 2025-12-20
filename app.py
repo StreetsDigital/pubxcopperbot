@@ -3,9 +3,12 @@
 import json
 import logging
 import os
+import signal
+import sys
 import threading
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from types import FrameType
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from slack_bolt import App
@@ -18,6 +21,15 @@ from copper_client import CopperClient
 from csv_handler import CSVHandler
 from query_processor import QueryProcessor
 from task_processor import TaskProcessor
+from validation import validate_and_sanitize, validate_entity_id
+from metrics import (
+    get_metrics,
+    get_metrics_content_type,
+    update_approval_gauges,
+    update_uptime,
+    SLACK_EVENTS_TOTAL,
+    ERRORS_TOTAL,
+)
 
 # Type aliases for common patterns
 JsonDict = Dict[str, Any]
@@ -1212,21 +1224,46 @@ def _execute_copper_operation(
     operation: str,
     entity_type: str,
     data: JsonDict,
-    entity_id: Optional[int] = None
-) -> Optional[Union[JsonDict, bool]]:
+    entity_id: Optional[int] = None,
+    skip_validation: bool = False
+) -> Optional[Union[JsonDict, bool, Dict[str, Any]]]:
     """
-    Execute a Copper CRM operation directly.
+    Execute a Copper CRM operation directly with input validation.
 
     Args:
         operation: 'create', 'update', or 'delete'
         entity_type: Entity type (task, person, company, opportunity, etc.)
         data: Data for create/update operations
         entity_id: Entity ID for update/delete operations
+        skip_validation: Skip validation (for internal trusted calls)
 
     Returns:
-        Result from Copper API or None on failure
+        Result from Copper API, validation error dict, or None on failure
     """
     try:
+        # Validate and sanitize input for create/update operations
+        if operation in ['create', 'update'] and not skip_validation:
+            is_valid, sanitized_data, errors = validate_and_sanitize(
+                entity_type, data, operation
+            )
+            if not is_valid:
+                logger.warning(
+                    f"Validation failed for {operation} {entity_type}: {errors}"
+                )
+                return {
+                    "validation_error": True,
+                    "errors": errors
+                }
+            data = sanitized_data
+
+        # Validate entity_id for update/delete operations
+        if operation in ['update', 'delete']:
+            validated_id = validate_entity_id(entity_id)
+            if validated_id is None:
+                logger.warning(f"Invalid entity_id: {entity_id}")
+                return None
+            entity_id = validated_id
+
         if operation == 'create':
             if entity_type in ['task', 'tasks']:
                 return copper_client.create_task(data)
@@ -1500,6 +1537,8 @@ class HealthHandler(BaseHTTPRequestHandler):
         """Handle GET requests."""
         if self.path == '/health':
             self._handle_health()
+        elif self.path == '/metrics':
+            self._handle_metrics()
         elif self.path == '/':
             self._handle_root()
         else:
@@ -1552,6 +1591,32 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(health, indent=2).encode())
 
+    def _handle_metrics(self) -> None:
+        """Return Prometheus metrics."""
+        try:
+            # Update gauges with current values
+            uptime = datetime.now() - _start_time
+            update_uptime(_start_time.timestamp())
+
+            # Update approval gauges
+            try:
+                pending_count = len(approval_system.get_pending_requests())
+                approver_count = len(approval_system.get_approvers())
+                update_approval_gauges(pending_count, approver_count)
+            except Exception:
+                pass  # Silently ignore if approval system is unavailable
+
+            # Generate metrics
+            metrics_output = get_metrics()
+
+            self.send_response(200)
+            self.send_header('Content-Type', get_metrics_content_type())
+            self.end_headers()
+            self.wfile.write(metrics_output)
+        except Exception as e:
+            logger.error(f"Error generating metrics: {e}")
+            self.send_error(500, 'Error generating metrics')
+
     def _handle_root(self) -> None:
         """Simple root response."""
         self.send_response(200)
@@ -1560,32 +1625,87 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'Copper CRM Slack Bot - OK')
 
 
-def start_health_server(port: int) -> None:
+# Global references for graceful shutdown
+_health_server: Optional[HTTPServer] = None
+_socket_handler: Optional[SocketModeHandler] = None
+_shutdown_event: threading.Event = threading.Event()
+
+
+def start_health_server(port: int, server_ready: threading.Event) -> None:
     """Start the health check HTTP server in a background thread."""
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    global _health_server
+    _health_server = HTTPServer(('0.0.0.0', port), HealthHandler)
     logger.info(f"Health server running on port {port}")
-    server.serve_forever()
+    server_ready.set()
+    _health_server.serve_forever()
+
+
+def shutdown_handler(signum: int, frame: Optional[FrameType]) -> None:
+    """Handle graceful shutdown on SIGTERM/SIGINT."""
+    sig_name = signal.Signals(signum).name
+    logger.info(f"Received {sig_name}, initiating graceful shutdown...")
+
+    # Prevent multiple shutdown attempts
+    if _shutdown_event.is_set():
+        logger.warning("Shutdown already in progress, forcing exit...")
+        sys.exit(1)
+    _shutdown_event.set()
+
+    try:
+        # Save approval system state
+        logger.info("Saving approval system state...")
+        approval_system._save_state()
+        logger.info("Approval state saved successfully")
+
+        # Stop the Socket Mode handler
+        if _socket_handler is not None:
+            logger.info("Stopping Slack Socket Mode handler...")
+            _socket_handler.close()
+            logger.info("Socket Mode handler stopped")
+
+        # Stop the health server
+        if _health_server is not None:
+            logger.info("Stopping health server...")
+            _health_server.shutdown()
+            logger.info("Health server stopped")
+
+        logger.info("Graceful shutdown complete")
+        sys.exit(0)
+
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}", exc_info=True)
+        sys.exit(1)
 
 
 def main() -> None:
     """Start the Slack bot."""
+    global _socket_handler
+
     logger.info("Starting Copper CRM Slack Bot...")
+
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
+    logger.info("Registered signal handlers for graceful shutdown")
 
     try:
         # Start health check server in background thread
         health_port = int(os.getenv('PORT', 3000))
+        server_ready = threading.Event()
         health_thread = threading.Thread(
             target=start_health_server,
-            args=(health_port,),
+            args=(health_port, server_ready),
             daemon=True
         )
         health_thread.start()
+        server_ready.wait(timeout=5)  # Wait for server to be ready
         logger.info(f"Health endpoint available at http://localhost:{health_port}/health")
 
         # Start the app using Socket Mode
-        handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
+        _socket_handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
         logger.info("Bot is running in Socket Mode!")
-        handler.start()
+        logger.info("Press Ctrl+C to stop gracefully")
+        _socket_handler.start()
 
     except Exception as e:
         logger.error(f"Failed to start bot: {str(e)}", exc_info=True)
