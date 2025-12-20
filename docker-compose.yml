@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  copperbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: copperbot
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Slack Configuration
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      # Copper CRM Configuration
+      - COPPER_API_KEY=${COPPER_API_KEY}
+      - COPPER_USER_EMAIL=${COPPER_USER_EMAIL}
+      # Optional Configuration
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DEFAULT_TASK_ASSIGNEE_ID=${DEFAULT_TASK_ASSIGNEE_ID:-}
+      - DEFAULT_PIPELINE_NAME=${DEFAULT_PIPELINE_NAME:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PORT=3000
+      - DATA_DIR=/app/data
+    volumes:
+      # Persist approval system state
+      - copperbot_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  copperbot_data:
+    driver: local
