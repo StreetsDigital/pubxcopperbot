@@ -33,6 +33,10 @@ class Config:
     # Default task assignee Copper user ID (for "assign to me" when user mapping not set)
     DEFAULT_TASK_ASSIGNEE_ID = os.getenv("DEFAULT_TASK_ASSIGNEE_ID")
 
+    # Default pipeline for opportunity imports (e.g., "Bid Intelligence - Supply")
+    DEFAULT_PIPELINE_ID = os.getenv("DEFAULT_PIPELINE_ID")
+    DEFAULT_PIPELINE_NAME = os.getenv("DEFAULT_PIPELINE_NAME", "Bid Intelligence - Supply")
+
     @classmethod
     def validate(cls):
         """Validate required configuration."""

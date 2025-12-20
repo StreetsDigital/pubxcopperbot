@@ -8,8 +8,9 @@ requests==2.31.0
 # Environment Variables
 python-dotenv==1.0.0
 
-# CSV Processing
+# CSV/Excel Processing
 pandas==2.1.4
+openpyxl==3.1.2
 
 # Natural Language Processing (optional, for query enhancement)
 anthropic>=0.40.0
