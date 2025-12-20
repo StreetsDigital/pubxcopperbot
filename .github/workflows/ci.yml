@@ -139,6 +139,13 @@ jobs:
           git reset --hard origin/main
           source venv/bin/activate
           pip install -r requirements.txt
+
+          # Ensure PORT is set in systemd service
+          if ! grep -q "PORT=3001" /etc/systemd/system/copperbot.service; then
+            sudo sed -i '/Environment="PATH=/a Environment="PORT=3001"' /etc/systemd/system/copperbot.service
+            sudo systemctl daemon-reload
+          fi
+
           sudo systemctl restart copperbot
           echo "Deployment complete at $(date)"
 
@@ -150,3 +157,5 @@ jobs:
         key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
         script: |
           sudo systemctl is-active copperbot && echo "Service is running" || echo "Service failed to start"
+          sleep 3
+          curl -s http://localhost:3001/health | head -c 200 || echo "Health check unavailable"

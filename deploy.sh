@@ -66,6 +66,7 @@ Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$CURRENT_DIR
 Environment="PATH=$CURRENT_DIR/venv/bin"
+Environment="PORT=3001"
 ExecStart=$CURRENT_DIR/venv/bin/python app.py
 Restart=always
 RestartSec=10
