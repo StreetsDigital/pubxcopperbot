@@ -1,10 +1,17 @@
 """Copper CRM Slack Bot - Main Application."""
 
 import os
+import json
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from config import Config
+
+# Track startup time for uptime calculation
+_start_time = datetime.now()
 from copper_client import CopperClient
 from query_processor import QueryProcessor
 from csv_handler import CSVHandler
@@ -1368,11 +1375,103 @@ def handle_map_user_command(ack, command, say):
         say(text=f"Sorry, I encountered an error: {str(e)}")
 
 
+# =============================================================================
+# Health Check Endpoint
+# =============================================================================
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """HTTP handler for health check endpoint."""
+
+    def log_message(self, format, *args):
+        """Suppress default HTTP logging to avoid noise."""
+        pass
+
+    def do_GET(self):
+        """Handle GET requests."""
+        if self.path == '/health':
+            self._handle_health()
+        elif self.path == '/':
+            self._handle_root()
+        else:
+            self.send_error(404, 'Not Found')
+
+    def _handle_health(self):
+        """Return health status with component checks."""
+        uptime = datetime.now() - _start_time
+        uptime_seconds = int(uptime.total_seconds())
+
+        # Check component availability
+        components = {
+            'slack_app': app is not None,
+            'copper_client': copper_client is not None,
+            'approval_system': approval_system is not None,
+            'query_processor': query_processor is not None,
+            'csv_handler': csv_handler is not None,
+            'task_processor': task_processor is not None,
+        }
+
+        # Check approval system state
+        try:
+            pending_count = len(approval_system.get_pending_requests())
+            approver_count = len(approval_system.get_approvers())
+            admin_count = len(approval_system.get_admins())
+            components['approval_state'] = True
+        except Exception:
+            pending_count = -1
+            approver_count = -1
+            admin_count = -1
+            components['approval_state'] = False
+
+        all_healthy = all(components.values())
+
+        health = {
+            'status': 'healthy' if all_healthy else 'degraded',
+            'uptime_seconds': uptime_seconds,
+            'uptime_human': str(uptime).split('.')[0],
+            'started_at': _start_time.isoformat(),
+            'components': components,
+            'stats': {
+                'pending_approvals': pending_count,
+                'approvers': approver_count,
+                'admins': admin_count,
+            }
+        }
+
+        self.send_response(200 if all_healthy else 503)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(health, indent=2).encode())
+
+    def _handle_root(self):
+        """Simple root response."""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Copper CRM Slack Bot - OK')
+
+
+def start_health_server(port: int):
+    """Start the health check HTTP server in a background thread."""
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    logger.info(f"Health server running on port {port}")
+    server.serve_forever()
+
+
 def main():
     """Start the Slack bot."""
     logger.info("Starting Copper CRM Slack Bot...")
 
     try:
+        # Start health check server in background thread
+        health_port = int(os.getenv('PORT', 3000))
+        health_thread = threading.Thread(
+            target=start_health_server,
+            args=(health_port,),
+            daemon=True
+        )
+        health_thread.start()
+        logger.info(f"Health endpoint available at http://localhost:{health_port}/health")
+
         # Start the app using Socket Mode
         handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
         logger.info("Bot is running in Socket Mode!")
