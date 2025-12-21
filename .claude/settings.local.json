@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python3:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(pip install:*)",
+      "Bash(pytest:*)",
+      "Bash(rm:*)",
+      "Bash(/usr/local/bin/python3.11 -m venv:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd health check endpoint for production monitoring\n\n- Add /health endpoint returning JSON with component status, uptime, and stats\n- Add / root endpoint for basic load balancer checks\n- Health server runs on PORT env var \\(default 3000\\) in background thread\n- Returns 200 when healthy, 503 when degraded\n- Add comprehensive test suite \\(10 tests\\) for health endpoint\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(python -m pip:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(./venv/bin/python -m pytest:*)",
+      "Bash(./venv/bin/pip install:*)",
+      "Bash(./venv/bin/python:*)",
+      "Bash(./venv/bin/pytest -q)",
+      "Bash(./venv/bin/mypy app.py --ignore-missing-imports)",
+      "Bash(git commit:*)",
+      "Bash(./venv/bin/mypy copper_client.py --ignore-missing-imports)",
+      "Bash(./venv/bin/pytest tests/test_copper_client.py -v)",
+      "Bash(./venv/bin/pytest tests/test_validation.py -v)",
+      "Bash(./venv/bin/mypy:*)",
+      "Bash(./venv/bin/pytest tests/test_health_endpoint.py -v)",
+      "Bash(ls:*)",
+      "Bash(./venv/bin/pytest -v --tb=short)"
+    ]
+  }
+}
