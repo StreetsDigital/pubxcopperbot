@@ -140,12 +140,40 @@ jobs:
           source venv/bin/activate
           pip install -r requirements.txt
 
-          # Ensure PORT is set in systemd service (use 3002 to avoid conflicts)
-          sudo sed -i 's/PORT=3001/PORT=3002/g' /etc/systemd/system/copperbot.service 2>/dev/null || true
-          if ! grep -q "PORT=3002" /etc/systemd/system/copperbot.service; then
-            sudo sed -i '/Environment="PATH=/a Environment="PORT=3002"' /etc/systemd/system/copperbot.service
+          # Create systemd service if it doesn't exist
+          if [ ! -f /etc/systemd/system/copperbot.service ]; then
+            echo "Creating systemd service file..."
+            sudo tee /etc/systemd/system/copperbot.service > /dev/null <<SVCEOF
+          [Unit]
+          Description=Copper CRM Slack Bot
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=$USER
+          WorkingDirectory=$HOME/pubxcopperbot
+          Environment="PATH=$HOME/pubxcopperbot/venv/bin"
+          Environment="PORT=3002"
+          EnvironmentFile=$HOME/pubxcopperbot/.env
+          ExecStart=$HOME/pubxcopperbot/venv/bin/python app.py
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+          SVCEOF
+            sudo systemctl daemon-reload
+            sudo systemctl enable copperbot
           fi
-          sudo systemctl daemon-reload
+
+          # Ensure PORT is set correctly
+          if ! grep -q "PORT=3002" /etc/systemd/system/copperbot.service; then
+            sudo sed -i 's/PORT=3001/PORT=3002/g' /etc/systemd/system/copperbot.service 2>/dev/null || true
+            sudo sed -i '/Environment="PATH=/a Environment="PORT=3002"' /etc/systemd/system/copperbot.service 2>/dev/null || true
+            sudo systemctl daemon-reload
+          fi
 
           sudo systemctl restart copperbot
           echo "Deployment complete at $(date)"
