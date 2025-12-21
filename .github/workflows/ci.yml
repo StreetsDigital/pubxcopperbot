@@ -137,13 +137,17 @@ jobs:
           cd ~/pubxcopperbot
           git fetch origin main
           git reset --hard origin/main
+          # Ensure venv exists
+          if [ ! -d venv ]; then
+            echo "Creating virtual environment..."
+            python3 -m venv venv
+          fi
           source venv/bin/activate
           pip install -r requirements.txt
 
-          # Create systemd service if it doesn't exist
-          if [ ! -f /etc/systemd/system/copperbot.service ]; then
-            echo "Creating systemd service file..."
-            sudo tee /etc/systemd/system/copperbot.service > /dev/null <<SVCEOF
+          # Recreate systemd service file (always update to latest config)
+          echo "Updating systemd service file..."
+          sudo tee /etc/systemd/system/copperbot.service > /dev/null <<SVCEOF
           [Unit]
           Description=Copper CRM Slack Bot
           After=network.target
@@ -152,9 +156,8 @@ jobs:
           Type=simple
           User=$USER
           WorkingDirectory=$HOME/pubxcopperbot
-          Environment="PATH=$HOME/pubxcopperbot/venv/bin"
+          Environment="PATH=$HOME/pubxcopperbot/venv/bin:/usr/local/bin:/usr/bin:/bin"
           Environment="PORT=3002"
-          EnvironmentFile=-$HOME/pubxcopperbot/.env
           ExecStart=$HOME/pubxcopperbot/venv/bin/python app.py
           Restart=always
           RestartSec=10
@@ -164,19 +167,8 @@ jobs:
           [Install]
           WantedBy=multi-user.target
           SVCEOF
-            sudo systemctl daemon-reload
-            sudo systemctl enable copperbot
-          fi
-
-          # Fix EnvironmentFile to be optional (add - prefix)
-          sudo sed -i 's|EnvironmentFile=/|EnvironmentFile=-/|g' /etc/systemd/system/copperbot.service 2>/dev/null || true
-
-          # Ensure PORT is set correctly
-          if ! grep -q "PORT=3002" /etc/systemd/system/copperbot.service; then
-            sudo sed -i 's/PORT=3001/PORT=3002/g' /etc/systemd/system/copperbot.service 2>/dev/null || true
-            sudo sed -i '/Environment="PATH=/a Environment="PORT=3002"' /etc/systemd/system/copperbot.service 2>/dev/null || true
-          fi
           sudo systemctl daemon-reload
+          sudo systemctl enable copperbot
 
           sudo systemctl restart copperbot
           echo "Deployment complete at $(date)"
