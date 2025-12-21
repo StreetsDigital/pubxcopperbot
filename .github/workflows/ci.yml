@@ -157,9 +157,17 @@ jobs:
         username: ${{ secrets.LIGHTSAIL_USER }}
         key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
         script: |
-          sudo systemctl is-active copperbot && echo "Service is running" || echo "Service failed to start"
+          echo "=== Service file ==="
+          cat /etc/systemd/system/copperbot.service 2>/dev/null || echo "Service file not found"
+          echo ""
+          echo "=== Service status ==="
+          sudo systemctl status copperbot --no-pager || true
+          echo ""
           echo "=== Recent logs ==="
-          sudo journalctl -u copperbot -n 30 --no-pager
-          sleep 3
+          sudo journalctl -u copperbot -n 50 --no-pager || true
+          echo ""
+          echo "=== Try manual start ==="
+          cd ~/pubxcopperbot && source venv/bin/activate && timeout 5 python app.py 2>&1 || true
+          echo ""
           echo "=== Health check ==="
           curl -s http://localhost:3002/health | head -c 500 || echo "Health check unavailable"
