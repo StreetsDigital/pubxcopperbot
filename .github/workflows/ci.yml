@@ -154,7 +154,7 @@ jobs:
           WorkingDirectory=$HOME/pubxcopperbot
           Environment="PATH=$HOME/pubxcopperbot/venv/bin"
           Environment="PORT=3002"
-          EnvironmentFile=$HOME/pubxcopperbot/.env
+          EnvironmentFile=-$HOME/pubxcopperbot/.env
           ExecStart=$HOME/pubxcopperbot/venv/bin/python app.py
           Restart=always
           RestartSec=10
@@ -168,12 +168,15 @@ jobs:
             sudo systemctl enable copperbot
           fi
 
+          # Fix EnvironmentFile to be optional (add - prefix)
+          sudo sed -i 's|EnvironmentFile=/|EnvironmentFile=-/|g' /etc/systemd/system/copperbot.service 2>/dev/null || true
+
           # Ensure PORT is set correctly
           if ! grep -q "PORT=3002" /etc/systemd/system/copperbot.service; then
             sudo sed -i 's/PORT=3001/PORT=3002/g' /etc/systemd/system/copperbot.service 2>/dev/null || true
             sudo sed -i '/Environment="PATH=/a Environment="PORT=3002"' /etc/systemd/system/copperbot.service 2>/dev/null || true
-            sudo systemctl daemon-reload
           fi
+          sudo systemctl daemon-reload
 
           sudo systemctl restart copperbot
           echo "Deployment complete at $(date)"
