@@ -25,7 +25,8 @@
       "Bash(./venv/bin/mypy:*)",
       "Bash(./venv/bin/pytest tests/test_health_endpoint.py -v)",
       "Bash(ls:*)",
-      "Bash(./venv/bin/pytest -v --tb=short)"
+      "Bash(./venv/bin/pytest -v --tb=short)",
+      "Bash(git push:*)"
     ]
   }
 }

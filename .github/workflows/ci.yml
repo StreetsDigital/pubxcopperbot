@@ -135,6 +135,12 @@ jobs:
         key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
         script: |
           set -e  # Exit on error
+          echo "=== Check if repo exists ==="
+          if [ ! -d ~/pubxcopperbot ]; then
+            echo "Cloning repository..."
+            cd ~
+            git clone https://github.com/StreetsDigital/pubxcopperbot.git
+          fi
           cd ~/pubxcopperbot
           echo "=== Current directory ==="
           pwd
