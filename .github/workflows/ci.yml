@@ -134,16 +134,28 @@ jobs:
         username: ${{ secrets.LIGHTSAIL_USER }}
         key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
         script: |
+          set -e  # Exit on error
           cd ~/pubxcopperbot
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Git pull ==="
           git fetch origin main
           git reset --hard origin/main
-          # Ensure venv exists
+          echo "=== Check python ==="
+          which python3
+          python3 --version
+          echo "=== Ensure venv exists ==="
           if [ ! -d venv ]; then
             echo "Creating virtual environment..."
             python3 -m venv venv
           fi
+          echo "=== Verify venv ==="
+          ls -la venv/bin/ | head -10
+          echo "=== Activate and install ==="
           source venv/bin/activate
-          pip install -r requirements.txt
+          which python
+          pip install -q -r requirements.txt
+          echo "=== Install complete ==="
 
           # Recreate systemd service file (always update to latest config)
           echo "Updating systemd service file..."
