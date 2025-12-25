@@ -129,10 +129,17 @@ jobs:
     steps:
     - name: Deploy to Lightsail
       uses: appleboy/ssh-action@v1.0.3
+      env:
+        SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+        SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+        COPPER_API_KEY: ${{ secrets.COPPER_API_KEY }}
+        COPPER_USER_EMAIL: ${{ secrets.COPPER_USER_EMAIL }}
       with:
         host: ${{ secrets.LIGHTSAIL_HOST }}
         username: ${{ secrets.LIGHTSAIL_USER }}
         key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+        envs: SLACK_BOT_TOKEN,SLACK_SIGNING_SECRET,SLACK_APP_TOKEN,COPPER_API_KEY,COPPER_USER_EMAIL
         script: |
           set -e  # Exit on error
           echo "=== Check if repo exists ==="
@@ -162,6 +169,20 @@ jobs:
           which python
           pip install -q -r requirements.txt
           echo "=== Install complete ==="
+
+          # Create .env file from secrets
+          echo "=== Creating .env file ==="
+          cat > .env << ENVEOF
+          SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+          SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+          SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+          COPPER_API_KEY=${COPPER_API_KEY}
+          COPPER_USER_EMAIL=${COPPER_USER_EMAIL}
+          ENVEOF
+          # Remove leading whitespace from each line
+          sed -i 's/^[[:space:]]*//' .env
+          chmod 600 .env
+          echo ".env file created (contents hidden for security)"
 
           # Recreate systemd service file (always update to latest config)
           echo "Updating systemd service file..."
