@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from anthropic import Anthropic
+import requests
 
 from config import Config
 from copper_client import CopperClient
@@ -29,15 +29,28 @@ class BusinessIntelligence:
             fuzzy_threshold: Minimum fuzzy match score (0-100) to consider a match
         """
         self.copper_client = copper_client
-        self.claude_client = None
+        self.claude_proxy_url = Config.CLAUDE_PROXY_URL
         self.fuzzy_matcher = FuzzyMatcher(threshold=fuzzy_threshold)
+        self.use_claude = False
 
-        # Initialize Claude for intelligent query processing
-        if Config.ANTHROPIC_API_KEY:
-            self.claude_client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
-            logger.info("Business Intelligence initialized with Claude API key")
+        # Check if Claude proxy is available
+        if Config.CLAUDE_PROXY_URL:
+            try:
+                response = requests.get(f"{self.claude_proxy_url}/health", timeout=2)
+                if response.status_code == 200:
+                    health = response.json()
+                    if health.get("configured"):
+                        self.use_claude = True
+                        auth_method = health.get("auth_method", "unknown")
+                        logger.info(f"Business Intelligence initialized with Claude proxy ({auth_method})")
+                    else:
+                        logger.warning("Claude proxy available but not configured")
+                else:
+                    logger.warning("Claude proxy health check failed - using basic query parsing")
+            except Exception as e:
+                logger.warning(f"Claude proxy not available ({e}) - using basic query parsing")
         else:
-            logger.warning("No Claude API key - using basic query parsing")
+            logger.warning("No Claude proxy URL - using basic query parsing")
 
     def analyze_query(self, query: str) -> Dict[str, Any]:
         """Analyze a natural language business query.
@@ -52,16 +65,11 @@ class BusinessIntelligence:
                 - entity_name: Name/identifier to search for
                 - include: List of related data to include
         """
-        if not self.claude_client:
+        if not self.use_claude:
             return self._basic_query_analysis(query)
 
         try:
-            response = self.claude_client.messages.create(
-                model="claude-3-5-haiku-20241022",
-                max_tokens=1024,
-                messages=[{
-                    "role": "user",
-                    "content": f"""Analyze this business intelligence query and extract structured information.
+            prompt = f"""Analyze this business intelligence query and extract structured information.
 
 Query: "{query}"
 
@@ -85,11 +93,23 @@ Examples:
 "Who are we talking to at Microsoft?" -> {{"intent": "contacts", "entity_type": "company", "entity_name": "Microsoft", "include": ["contacts", "opportunities"]}}
 "What deals are in progress?" -> {{"intent": "deals", "entity_type": "general", "entity_name": null, "include": ["opportunities"]}}
 """
-                }]
+
+            # Call Claude proxy
+            response = requests.post(
+                f"{self.claude_proxy_url}/v1/messages",
+                json={
+                    "prompt": prompt,
+                    "max_tokens": 1024,
+                    "model": "claude-3-5-haiku-20241022",
+                    "temperature": 0.0
+                },
+                timeout=30
             )
+            response.raise_for_status()
 
             # Extract JSON from Claude's response
-            content = response.content[0].text.strip()
+            result = response.json()
+            content = result.get("content", "").strip()
             # Remove markdown code blocks if present
             if content.startswith("```json"):
                 content = content[7:]

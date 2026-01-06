@@ -1,6 +1,33 @@
 version: '3.8'
 
 services:
+  claude-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.claude
+    container_name: claude-proxy
+    restart: unless-stopped
+    ports:
+      - "6969:6969"
+    environment:
+      # Use OAuth token (preferred) or fall back to API key
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_PROXY_PORT=6969
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6969/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - copperbot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   copperbot:
     build:
       context: .
@@ -17,8 +44,11 @@ services:
       # Copper CRM Configuration
       - COPPER_API_KEY=${COPPER_API_KEY}
       - COPPER_USER_EMAIL=${COPPER_USER_EMAIL}
-      # Optional Configuration
+      # Claude Proxy Configuration
+      - CLAUDE_PROXY_URL=http://claude-proxy:8001
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Optional Configuration
       - DEFAULT_TASK_ASSIGNEE_ID=${DEFAULT_TASK_ASSIGNEE_ID:-}
       - DEFAULT_PIPELINE_NAME=${DEFAULT_PIPELINE_NAME:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -27,12 +57,17 @@ services:
     volumes:
       # Persist approval system state
       - copperbot_data:/app/data
+    depends_on:
+      claude-proxy:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - copperbot
     logging:
       driver: "json-file"
       options:
@@ -42,3 +77,7 @@ services:
 volumes:
   copperbot_data:
     driver: local
+
+networks:
+  copperbot:
+    driver: bridge

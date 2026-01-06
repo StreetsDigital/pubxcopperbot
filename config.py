@@ -22,6 +22,8 @@ class Config:
 
     # Anthropic Claude Configuration (for NLP)
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    CLAUDE_CODE_OAUTH_TOKEN = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
+    CLAUDE_PROXY_URL = os.getenv("CLAUDE_PROXY_URL", "http://localhost:6969")
 
     # Application Settings
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
