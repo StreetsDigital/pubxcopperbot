@@ -24,17 +24,9 @@ class Config:
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
     # Application Settings
-    PORT = int(os.getenv("PORT", 3000))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-    # Persistent storage directory (defaults to ./data)
-    DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
-
-    # Default task assignee Copper user ID (for "assign to me" when user mapping not set)
-    DEFAULT_TASK_ASSIGNEE_ID = os.getenv("DEFAULT_TASK_ASSIGNEE_ID")
-
-    # Default pipeline for opportunity imports (e.g., "Bid Intelligence - Supply")
-    DEFAULT_PIPELINE_ID = os.getenv("DEFAULT_PIPELINE_ID")
+    # CSV Processing Settings
     DEFAULT_PIPELINE_NAME = os.getenv("DEFAULT_PIPELINE_NAME", "Bid Intelligence - Supply")
 
     @classmethod

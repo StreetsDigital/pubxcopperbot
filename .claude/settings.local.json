@@ -26,7 +26,12 @@
       "Bash(./venv/bin/pytest tests/test_health_endpoint.py -v)",
       "Bash(ls:*)",
       "Bash(./venv/bin/pytest -v --tb=short)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python app.py:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "WebSearch",
+      "Bash(pkill:*)"
     ]
   }
 }
