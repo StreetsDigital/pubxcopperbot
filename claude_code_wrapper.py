@@ -68,54 +68,45 @@ async def create_message(request: ClaudeRequest) -> ClaudeResponse:
     Uses the `claude` CLI tool with OAuth authentication.
     """
     try:
-        # Create a temporary file for the prompt
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write(request.prompt)
-            prompt_file = f.name
+        # Execute Claude Code CLI with --print mode
+        # Pass prompt via stdin for better handling of special characters
+        cmd = [
+            "claude",
+            "--print",  # Non-interactive mode
+            "--output-format", "text",  # Plain text output
+            "--model", request.model,
+            "--no-session-persistence",  # Don't save session
+            "--tools", "",  # Disable tools for simple queries (can enable later)
+        ]
 
-        try:
-            # Execute Claude Code CLI
-            # Use --model flag if available, otherwise use default
-            cmd = [
-                "claude",
-                "--file", prompt_file,
-                "--no-stream"  # Don't stream, return all at once
-            ]
+        logger.info(f"Executing Claude Code CLI with prompt length: {len(request.prompt)}")
 
-            logger.info(f"Executing Claude Code CLI: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            input=request.prompt,
+            capture_output=True,
+            text=True,
+            timeout=60,  # 60 second timeout
+            cwd="/app"
+        )
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,  # 60 second timeout
-                env={**os.environ, "CLAUDE_API_KEY": os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")}
+        if result.returncode != 0:
+            logger.error(f"Claude Code CLI error: {result.stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude Code CLI error: {result.stderr}"
             )
 
-            if result.returncode != 0:
-                logger.error(f"Claude Code CLI error: {result.stderr}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Claude Code CLI error: {result.stderr}"
-                )
+        # Extract response
+        output = result.stdout.strip()
 
-            # Extract response
-            output = result.stdout.strip()
+        logger.info(f"Claude Code response received ({len(output)} chars)")
 
-            logger.info(f"Claude Code response received ({len(output)} chars)")
-
-            return ClaudeResponse(
-                content=output,
-                model=request.model,
-                stop_reason="end_turn"
-            )
-
-        finally:
-            # Clean up temp file
-            try:
-                os.unlink(prompt_file)
-            except Exception:
-                pass
+        return ClaudeResponse(
+            content=output,
+            model=request.model,
+            stop_reason="end_turn"
+        )
 
     except subprocess.TimeoutExpired:
         logger.error("Claude Code CLI timeout")
