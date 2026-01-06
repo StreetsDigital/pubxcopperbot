@@ -32,7 +32,8 @@
       "mcp__context7__query-docs",
       "WebSearch",
       "Bash(pkill:*)",
-      "Bash(gh run list:*)"
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
     ]
   }
 }
