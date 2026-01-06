@@ -76,8 +76,10 @@ Query: "{query}"
 Extract:
 1. INTENT - What does the user want? (status, overview, contacts, deals, history, all)
 2. ENTITY_TYPE - What are they asking about? (company, person, opportunity, lead, or general)
-3. ENTITY_NAME - The specific name/identifier mentioned (if any)
+3. ENTITY_NAME - The ACTUAL NAME of the entity being asked about. Remove action verbs like "check", "show", "find", "look up", "get", "see". Extract ONLY the proper noun/name.
 4. INCLUDE - What related data should be included? (contacts, opportunities, leads, tasks, companies, notes, history, all)
+
+CRITICAL: For ENTITY_NAME, strip out ALL action verbs and helper words. Only return the actual name/identifier.
 
 Respond ONLY with valid JSON:
 {{
@@ -92,6 +94,9 @@ Examples:
 "Show me everything about John Doe" -> {{"intent": "all", "entity_type": "person", "entity_name": "John Doe", "include": ["companies", "opportunities", "tasks", "notes"]}}
 "Who are we talking to at Microsoft?" -> {{"intent": "contacts", "entity_type": "company", "entity_name": "Microsoft", "include": ["contacts", "opportunities"]}}
 "What deals are in progress?" -> {{"intent": "deals", "entity_type": "general", "entity_name": null, "include": ["opportunities"]}}
+"can you check telegraph for me?" -> {{"intent": "all", "entity_type": "company", "entity_name": "telegraph", "include": ["contacts", "opportunities", "leads", "tasks"]}}
+"find acme corp" -> {{"intent": "all", "entity_type": "company", "entity_name": "acme corp", "include": ["contacts", "opportunities", "leads", "tasks"]}}
+"look up sarah johnson" -> {{"intent": "all", "entity_type": "person", "entity_name": "sarah johnson", "include": ["companies", "opportunities", "tasks", "notes"]}}
 """
 
             # Call Claude proxy
@@ -156,11 +161,17 @@ Examples:
         # Extract entity name using simple heuristics
         entity_name = None
 
-        # Remove common question words and prepositions
+        # Remove action verbs, question words, and prepositions
         stop_words = {
-            "what", "what's", "tell", "me", "about", "can", "you", "show",
+            # Action verbs
+            "check", "find", "get", "show", "see", "look", "lookup", "search",
+            "fetch", "pull", "retrieve", "give", "display", "list",
+            # Question words
+            "what", "what's", "tell", "me", "about", "can", "you",
             "the", "status", "of", "information", "on", "for", "is", "are",
-            "who", "where", "when", "how", "with", "at", "in", "a", "an"
+            "who", "where", "when", "how", "with", "at", "in", "a", "an",
+            # Polite words
+            "please", "could", "would", "will", "up"
         }
 
         # Split query into words
