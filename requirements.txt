@@ -15,8 +15,8 @@ openpyxl==3.1.2
 # Natural Language Processing
 anthropic>=0.40.0
 
-# Fuzzy Matching
-rapidfuzz==3.14.3
+# Fuzzy Matching (3.13.0 is the last version supporting Python 3.9)
+rapidfuzz==3.13.0
 jellyfish==1.2.1
 
 # Logging
