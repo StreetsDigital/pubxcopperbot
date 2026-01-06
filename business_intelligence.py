@@ -205,25 +205,167 @@ Examples:
 
         # Find primary entity with fuzzy matching
         if entity_name:
-            matches = None
-            search_count = 0
+            all_matches = []
+            total_search_count = 0
 
             if entity_type == "company":
-                # Get total count before matching
-                all_results = self.copper_client.search_companies({})
-                search_count = len(all_results) if all_results else 0
-                matches = self.fuzzy_matcher.match_companies(entity_name, all_results) if all_results else []
+                # For company names, search across multiple entity types
+                # 1. Search actual companies
+                companies = self.copper_client.search_companies({})
+                if companies:
+                    company_matches = self.fuzzy_matcher.match_companies(entity_name, companies)
+                    all_matches.extend([(match, score, "company") for match, score in company_matches])
+                    total_search_count += len(companies)
+
+                # 2. Search leads (could have company name)
+                leads = self.copper_client.search_leads({})
+                if leads:
+                    lead_matches = self.fuzzy_matcher.match_companies(entity_name, leads)
+                    all_matches.extend([(match, score, "lead") for match, score in lead_matches])
+                    total_search_count += len(leads)
+
+                # 3. Search opportunities (could have company name)
+                opportunities = self.copper_client.search_opportunities({})
+                if opportunities:
+                    opp_matches = self.fuzzy_matcher.match_opportunities(entity_name, opportunities)
+                    all_matches.extend([(match, score, "opportunity") for match, score in opp_matches])
+                    total_search_count += len(opportunities)
+
+                # Sort all matches by score
+                all_matches.sort(key=lambda x: x[1], reverse=True)
+
+                # Convert back to (entity, score) format, prioritizing companies
+                matches = []
+                for match, score, match_type in all_matches:
+                    # Boost company matches slightly
+                    if match_type == "company":
+                        score = min(100, score + 5)
+                    matches.append((match, score))
+
             elif entity_type == "person":
-                all_results = self.copper_client.search_people({})
-                search_count = len(all_results) if all_results else 0
-                matches = self.fuzzy_matcher.match_contacts(entity_name, all_results) if all_results else []
+                # For person names, search across multiple entity types
+                # 1. Search actual people/contacts
+                people = self.copper_client.search_people({})
+                if people:
+                    person_matches = self.fuzzy_matcher.match_contacts(entity_name, people)
+                    all_matches.extend([(match, score, "person") for match, score in person_matches])
+                    total_search_count += len(people)
+
+                # 2. Search leads (could have contact person)
+                leads = self.copper_client.search_leads({})
+                if leads:
+                    # Match against lead contact names
+                    lead_matches = self.fuzzy_matcher.match_contacts(entity_name, leads)
+                    all_matches.extend([(match, score, "lead") for match, score in lead_matches])
+                    total_search_count += len(leads)
+
+                # 3. Search opportunities (could have associated contact)
+                opportunities = self.copper_client.search_opportunities({})
+                if opportunities:
+                    # Match against opportunity names (might contain person info)
+                    opp_matches = self.fuzzy_matcher.match_opportunities(entity_name, opportunities)
+                    all_matches.extend([(match, score, "opportunity") for match, score in opp_matches])
+                    total_search_count += len(opportunities)
+
+                # Sort all matches by score
+                all_matches.sort(key=lambda x: x[1], reverse=True)
+
+                # Convert back to (entity, score) format, prioritizing people
+                matches = []
+                for match, score, match_type in all_matches:
+                    # Boost person matches slightly
+                    if match_type == "person":
+                        score = min(100, score + 5)
+                    matches.append((match, score))
+
             elif entity_type == "opportunity":
-                all_results = self.copper_client.search_opportunities({})
-                search_count = len(all_results) if all_results else 0
-                matches = self.fuzzy_matcher.match_opportunities(entity_name, all_results) if all_results else []
+                # For opportunities, search across multiple entity types
+                # 1. Search actual opportunities
+                opportunities = self.copper_client.search_opportunities({})
+                if opportunities:
+                    opp_matches = self.fuzzy_matcher.match_opportunities(entity_name, opportunities)
+                    all_matches.extend([(match, score, "opportunity") for match, score in opp_matches])
+                    total_search_count += len(opportunities)
+
+                # 2. Search companies (opportunity might be company-related)
+                companies = self.copper_client.search_companies({})
+                if companies:
+                    company_matches = self.fuzzy_matcher.match_companies(entity_name, companies)
+                    all_matches.extend([(match, score, "company") for match, score in company_matches])
+                    total_search_count += len(companies)
+
+                # 3. Search leads (could be pre-opportunity)
+                leads = self.copper_client.search_leads({})
+                if leads:
+                    lead_matches = self.fuzzy_matcher.match_companies(entity_name, leads)
+                    all_matches.extend([(match, score, "lead") for match, score in lead_matches])
+                    total_search_count += len(leads)
+
+                # Sort all matches by score
+                all_matches.sort(key=lambda x: x[1], reverse=True)
+
+                # Convert back to (entity, score) format, prioritizing opportunities
+                matches = []
+                for match, score, match_type in all_matches:
+                    # Boost opportunity matches slightly
+                    if match_type == "opportunity":
+                        score = min(100, score + 5)
+                    matches.append((match, score))
+
+            elif entity_type == "task":
+                # For tasks, search tasks by name or description
+                tasks = self.copper_client.search_tasks({})
+                if tasks:
+                    task_matches = self.fuzzy_matcher.match_tasks(entity_name, tasks)
+                    all_matches.extend([(match, score, "task") for match, score in task_matches])
+                    total_search_count = len(tasks)
+
+                # Sort all matches by score
+                all_matches.sort(key=lambda x: x[1], reverse=True)
+
+                # Convert back to (entity, score) format
+                matches = [(match, score) for match, score, _ in all_matches]
+
+            else:
+                # Fallback: Search all entity types
+                logger.info(f"Unknown entity type '{entity_type}', searching all types")
+
+                # Search companies
+                companies = self.copper_client.search_companies({})
+                if companies:
+                    company_matches = self.fuzzy_matcher.match_companies(entity_name, companies)
+                    all_matches.extend([(match, score, "company") for match, score in company_matches])
+                    total_search_count += len(companies)
+
+                # Search people
+                people = self.copper_client.search_people({})
+                if people:
+                    person_matches = self.fuzzy_matcher.match_contacts(entity_name, people)
+                    all_matches.extend([(match, score, "person") for match, score in person_matches])
+                    total_search_count += len(people)
+
+                # Search opportunities
+                opportunities = self.copper_client.search_opportunities({})
+                if opportunities:
+                    opp_matches = self.fuzzy_matcher.match_opportunities(entity_name, opportunities)
+                    all_matches.extend([(match, score, "opportunity") for match, score in opp_matches])
+                    total_search_count += len(opportunities)
+
+                # Search leads
+                leads = self.copper_client.search_leads({})
+                if leads:
+                    lead_matches = self.fuzzy_matcher.match_companies(entity_name, leads)
+                    all_matches.extend([(match, score, "lead") for match, score in lead_matches])
+                    total_search_count += len(leads)
+
+                # Sort all matches by score
+                all_matches.sort(key=lambda x: x[1], reverse=True)
+
+                # Convert back to (entity, score) format
+                matches = [(match, score) for match, score, _ in all_matches]
 
             # Store debug info
-            intelligence["debug_info"]["search_count"] = search_count
+            intelligence["debug_info"]["search_count"] = total_search_count
             intelligence["debug_info"]["matches_found"] = len(matches) if matches else 0
             if matches:
                 intelligence["debug_info"]["best_score"] = matches[0][1]
@@ -242,6 +384,12 @@ Examples:
             # Single clear match or best match
             if matches:
                 intelligence["primary_entity"] = matches[0][0]  # Best match
+        else:
+            # No entity name extracted - log this for debugging
+            intelligence["debug_info"]["error"] = "Could not extract entity name from query"
+            intelligence["debug_info"]["search_count"] = 0
+            intelligence["debug_info"]["matches_found"] = 0
+            logger.warning(f"No entity name extracted from query: '{query}'")
 
         # Gather related data
         if intelligence["primary_entity"]:

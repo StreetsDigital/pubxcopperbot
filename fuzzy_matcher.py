@@ -139,6 +139,44 @@ class FuzzyMatcher:
         results.sort(key=lambda x: x[1], reverse=True)
         return results
 
+    def match_tasks(
+        self,
+        query: str,
+        tasks: JsonList,
+        assignee_filter: Optional[str] = None
+    ) -> List[MatchResult]:
+        """Fuzzy match tasks by name, description, or assignee.
+
+        Args:
+            query: Search term
+            tasks: List of task dicts from CRM
+            assignee_filter: Optional assignee filter
+
+        Returns:
+            List of (task, score) tuples sorted by score descending
+        """
+        results = []
+
+        for task in tasks:
+            # Apply assignee filter if specified
+            if assignee_filter:
+                assignee = task.get("assignee_name", "") or task.get("assignee", {}).get("name", "")
+                if not self._fuzzy_compare(assignee_filter, assignee, threshold=70):
+                    continue
+
+            # Build searchable fields
+            searchable = self._build_task_searchable(task)
+
+            # Calculate best match score
+            score = self._calculate_best_score(query, searchable)
+
+            if score >= self.threshold:
+                results.append((task, score))
+
+        # Sort by score descending
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
+
     def _build_contact_searchable(self, contact: JsonDict) -> List[str]:
         """Build list of searchable strings for a contact."""
         searchable = []
@@ -219,6 +257,41 @@ class FuzzyMatcher:
             searchable.append(opp["status"])
         if opp.get("stage"):
             searchable.append(opp["stage"])
+
+        return searchable
+
+    def _build_task_searchable(self, task: JsonDict) -> List[str]:
+        """Build list of searchable strings for a task."""
+        searchable = []
+
+        # Name/Title
+        if task.get("name"):
+            searchable.append(task["name"])
+
+        # Description/Details
+        if task.get("details"):
+            searchable.append(task["details"])
+
+        # Assignee name
+        if task.get("assignee_name"):
+            searchable.append(task["assignee_name"])
+        elif task.get("assignee") and isinstance(task["assignee"], dict):
+            if task["assignee"].get("name"):
+                searchable.append(task["assignee"]["name"])
+
+        # Related entity names (if available)
+        if task.get("related_resource"):
+            related = task["related_resource"]
+            if related.get("name"):
+                searchable.append(related["name"])
+
+        # Status
+        if task.get("status"):
+            searchable.append(task["status"])
+
+        # Priority
+        if task.get("priority"):
+            searchable.append(task["priority"])
 
         return searchable
 
