@@ -36,7 +36,7 @@ class BusinessIntelligence:
         # Check if Claude proxy is available
         if Config.CLAUDE_PROXY_URL:
             try:
-                response = requests.get(f"{self.claude_proxy_url}/health", timeout=2)
+                response = requests.get(f"{self.claude_proxy_url}/health", timeout=10)
                 if response.status_code == 200:
                     health = response.json()
                     if health.get("configured"):
